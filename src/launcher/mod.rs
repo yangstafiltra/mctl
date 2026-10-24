@@ -927,7 +927,6 @@ pub fn build_launch_command(
     username: &str,
     memory_mb: u32,
     quick_play_world: Option<&str>,
-    netease_uuid: Option<&str>,
     authlib: Option<(&Path, &str, &str, &str)>, // (jar, yggdrasil根, 角色uuid, access_token)
 ) -> Result<Command> {
     let natives_dir = inst.dir.join("natives");
@@ -948,14 +947,11 @@ pub fn build_launch_command(
     // 外置登录：真实角色 uuid + access_token（authlib-injector 会向 Yggdrasil 校验）
     let (uuid, token, user_type): (String, String, &str) = match authlib {
         Some((_, _, au, at)) => (au.to_string(), at.to_string(), "msa"),
-        None => match netease_uuid {
-            Some(u) => (u.to_string(), "0".to_string(), "legacy"),
-            None => (
-                offline_uuid(username),
-                format!("mctl{}", hex(&rand_uuid_bytes())),
-                "legacy",
-            ),
-        },
+        None => (
+            offline_uuid(username),
+            format!("mctl{}", hex(&rand_uuid_bytes())),
+            "legacy",
+        ),
     };
     let tokens = |s: &str| {
         replace_tokens(
@@ -1250,7 +1246,7 @@ mod tests {
         // 不带世界：quickPlay 参数完全不注入
         let java = std::path::Path::new("/fake/java");
         let cmd = build_launch_command(
-            &mc, &mc, &inst, &profile, java, "Player", 2048, None, None, None,
+            &mc, &mc, &inst, &profile, java, "Player", 2048, None, None,
         )
         .unwrap();
         let args: Vec<String> = cmd
@@ -1272,7 +1268,6 @@ mod tests {
             "Player",
             2048,
             Some("我的世界"),
-            None,
             None,
         )
         .unwrap();

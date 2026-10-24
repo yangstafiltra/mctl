@@ -1006,7 +1006,7 @@ fn big_bar_spans(filled: usize, bw: usize, phase: usize, age: f32) -> Vec<Span<'
     out
 }
 
-/// 下载中心主页渲染（Alt+6）。复用资源页内部的同一个下载视图，
+/// 下载中心主视图渲染（Alt+6）。复用资源页内部的同一个下载视图，
 /// 别写第二份——两处渲染漂移过一次，状态显示就不一致了。
 pub fn draw_download_center(frame: &mut Frame, app: &mut App, area: Rect) {
     draw_download(frame, app, area)

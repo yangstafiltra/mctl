@@ -199,7 +199,7 @@ pub struct Settings {
     /// /// 老配置（没有这个键）也读成 false：宁可不开，也不替用户决定。
     #[serde(default)]
     pub auto_shot: Option<bool>,
-    /// 主页大图：true = MCTL 立体 ASCII 常驻顶部（有截图也不铺满）；
+    /// 顶部大图：true = MCTL 立体 ASCII 常驻（有截图也不铺满）；
     /// false（**默认**）= 有图显示图，没图才显示 ASCII。
     /// /// 老配置没有这个键 → None → 当 false，不替用户改选择。
     #[serde(default)]
@@ -235,7 +235,7 @@ pub fn save_settings(root: &std::path::Path, s: &Settings) -> Result<()> {
 
 /// 测试专用：每次调用返回一个全新的临时配置根目录。
 /// 测试是并行跑的，共用同一个目录会互相污染（上次留下的 session.json 会被下个测试读到）。
-/// 「最近」历史：主页用它做聚合展示。
+/// 「最近」历史：记录进过的服务器与下载。
 /// 单独一个文件而不是塞进 session.json —— session 是「启动记忆」（光标位置、
 /// 选中项），recents 是**跨会话增长的用户历史**。混在一起会让 session.json
 /// 每次启动都被改写，而它本来大部分时候是不动的。

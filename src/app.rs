@@ -643,7 +643,7 @@ pub enum SettingField {
     RoleName,
     GridCols,
     GridRows,
-    /// 主页大图区：ASCII 常驻 vs 有图显示图
+    /// 顶部大图区：ASCII 常驻 vs 有图显示图
     AsciiAlways,
     /// 世界选中框流光描边动画：←→ 开关
     WorldAnim,
@@ -663,7 +663,7 @@ pub enum SettingGroup {
     Online,
     /// 资源中心：网格排布
     Resource,
-    /// 界面：主页大图 / 动画 / 主题
+    /// 界面：顶部大图 / 动画 / 主题
     Ui,
     /// 隐私：自动截图
     Privacy,
@@ -740,7 +740,7 @@ impl SettingField {
             SettingField::GridCols => "网格列数",
             SettingField::GridRows => "网格行数",
             SettingField::AutoShot => "自动截图",
-            SettingField::AsciiAlways => "主页大图",
+            SettingField::AsciiAlways => "顶部大图",
             SettingField::WorldAnim => "选中框动画",
             SettingField::Theme => "主题",
         }
@@ -945,7 +945,7 @@ pub struct ThemePicker {
 }
 
 pub struct App {
-    // ---- 顶栏 / 主页 ----
+    // ---- 顶栏 / 横幅 ----
     pub home_view: HomeView,
     pub quit: bool,
     pub status: String,
@@ -1090,9 +1090,9 @@ pub struct App {
     pub install_tasks: Vec<InstallTask>,
     /// 下一个下载中心任务 id
     pub next_task_id: u64,
-    /// 主页大图区：true = ASCII 常驻；false = 有图显示图（默认）
+    /// 顶部大图区：true = ASCII 常驻；false = 有图显示图（默认）
     pub ascii_always: bool,
-    /// 主页完整日志视图开关
+    /// 完整日志视图开关
     pub home_log_full: bool,
     /// LittleSkin OAuth 应用登记状态
     pub ls: LsPage,
@@ -1122,7 +1122,7 @@ pub struct App {
     /// 最近一次终端尺寸（Resize 事件更新，供鼠标坐标换算）
     pub term_size: (u16, u16),
 
-    // ---- 最近历史（主页聚合展示）----
+    // ---- 最近历史 ----
     /// 跨会话增长的用户历史，存 `recents.json`。与 session.json 分开：
     /// session 是"启动记忆"，recents 是"我去过哪"，混在一起会让 session
     /// 每次启动都被改写。
@@ -3067,7 +3067,7 @@ impl App {
     }
 
     /// 保存会话状态（退出时调用）
-    /// 记一次「最近访问」。写盘立刻做——这些记录的丢失代价很低（顶多主页少一块），
+    /// 记一次「最近访问」。写盘立刻做——这些记录的丢失代价很低（顶多少了历史入口），
     /// 但如果只在正常退出时存，崩溃/强杀就会丢。
     pub fn record_recent(&mut self, kind: RecentKind, id: &str, name: &str, detail: &str) {
         let item = storage::RecentItem::new(id, name, detail);
@@ -3943,7 +3943,7 @@ impl App {
         if let Some(v) = s.auto_shot {
             self.auto_shot = v;
         }
-        // 以前漏了 ascii_always：快照里有、还原时不用 →「放弃」撤不掉主页大图的改动
+        // 以前漏了 ascii_always：快照里有、还原时不用 →「放弃」撤不掉顶部大图的改动
         self.ascii_always = s.ascii_always.unwrap_or(false);
         // 开关/主题没有 None 语义：缺键按默认（动画开、mctl 经典配色）
         self.world_anim = s.world_anim.unwrap_or(true);
@@ -5811,7 +5811,6 @@ async fn launch_instance_inner(
         username,
         2048,
         quick_play_world.as_deref(),
-        None,
         authlib,
     )?;
     let mut tcmd = tokio::process::Command::new(cmd.get_program());
