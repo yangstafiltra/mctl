@@ -35,7 +35,7 @@ pub fn draw_view(frame: &mut Frame, app: &mut App, view: HomeView, area: Rect) {
     // 那八成高度就纯属浪费，而下面的世界列表只分到 11 行、常常只显示 1 行。
     // 所以没图时收成紧凑头部，把空间还给内容。
     let has_image = match view {
-        HomeView::Local => app.banner_shot.is_some(),
+        HomeView::Instance => app.banner_shot.is_some(),
         _ => false,
     };
     let banner_h = if has_image {
@@ -46,19 +46,6 @@ pub fn draw_view(frame: &mut Frame, app: &mut App, view: HomeView, area: Rect) {
     };
     let rows = Layout::vertical([Constraint::Length(banner_h), Constraint::Min(0)]).split(area);
     match view {
-        HomeView::Local => {
-            banner_panel(
-                frame,
-                app,
-                rows[0],
-                "自动截图（mctl/shots/ 按世界分目录，↑↓ 切世界即切换）",
-                app.home_focus == HomeFocus::Banner,
-            );
-            let cols = Layout::horizontal([Constraint::Ratio(4, 5), Constraint::Ratio(1, 5)])
-                .split(rows[1]);
-            super::world_select::render(frame, app, cols[0], app.home_focus == HomeFocus::List);
-            downloads_panel(frame, app, cols[1], app.home_focus == HomeFocus::Downloads);
-        }
         HomeView::Server => {
             banner_panel(
                 frame,
@@ -535,7 +522,7 @@ fn banner_panel(frame: &mut Frame, app: &mut App, area: Rect, hint: &str, focuse
     // 有主视觉图（本地=最近世界自动截图）。服务器页**不放宣传图**：
     // 顶部就是 MCTL 大字（用户口径：服务器页顶部是字，不是图）。
     let shot = match app.home_view {
-        HomeView::Local => app.banner_shot.as_mut(),
+        HomeView::Instance => app.banner_shot.as_mut(),
         _ => None,
     };
     if let Some(shot) = shot {
@@ -560,7 +547,6 @@ fn banner_panel(frame: &mut Frame, app: &mut App, area: Rect, hint: &str, focuse
     ];
     let play = match app.instances.get(app.selected_instance) {
         Some(inst) => match app.home_view {
-            HomeView::Local => format!("▶ PLAY  {}   ·   [回车] 直进世界", inst.id),
             HomeView::Server => "▶ PLAY  连接所选 Java 服务器".to_string(),
             HomeView::Instance => format!("▶ PLAY  {}   ·   [回车] 进世界", inst.id),
             HomeView::Resource | HomeView::Download | HomeView::Plugins | HomeView::Settings => {
@@ -910,7 +896,6 @@ fn panel_full(frame: &mut Frame, app: &mut App, area: Rect) {
     match app.home_focus {
         HomeFocus::Banner => {
             let hint = match app.home_view {
-                HomeView::Local => "自动截图（mctl/shots/ 按世界分目录，↑↓ 切世界即切换）",
                 HomeView::Instance => "当前实例 · ↑↓ 选世界 · 回车直进",
                 HomeView::Server => "Java 国际服（原版 Server List Ping · 网格 ↑↓←→ 选 · 回车进服）",
                 HomeView::Resource
@@ -921,7 +906,7 @@ fn panel_full(frame: &mut Frame, app: &mut App, area: Rect) {
             banner_panel(frame, app, area, hint, true);
         }
         HomeFocus::List => match app.home_view {
-            HomeView::Local | HomeView::Instance => {
+            HomeView::Instance => {
                 super::world_select::render(frame, app, area, true)
             }
             HomeView::Server => servers_panel(frame, app, area, true),

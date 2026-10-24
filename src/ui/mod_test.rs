@@ -41,9 +41,9 @@ mod tests {
         assert!(contains_line(&lines, "账 户"), "dock 应有账户卡");
         assert!(contains_line(&lines, "视 图"), "dock 应有视图侧栏");
         assert!(contains_line(&lines, "状 态"), "dock 应有状态卡");
-        // 主区窗口标题栏
-        // 渲染层给 CJK 逐字插空格（"主 界 面"），断言要跟着这个格式
-        assert!(contains_line(&lines, "主 界 面"), "侧栏应有主界面视图");
+        // 侧栏第一项
+        // 渲染层给 CJK 逐字插空格（"实 例"），断言要跟着这个格式
+        assert!(contains_line(&lines, "实 例"), "侧栏应有实例视图");
         // 分隔条
         assert!(contains_line(&lines, "│"), "应有 dock 分隔条");
         for l in &lines {
@@ -94,12 +94,12 @@ mod tests {
     async fn dock_view_switches_main_window() {
         let mut app = App::new_from(crate::storage::tmp_config_dir("ui")).unwrap();
         app.term_size = (100, 34);
-        // 点击 dock「视图」第二项（服务器）→ 主区切换
+        // 点击 dock「视图」第一项（实例）→ 主区切换
         let w = 100u16;
         let area = ratatui::layout::Rect::new(0, 1, w, 32);
         let views_rect = app.wm.window_rect(area, crate::app::win_id::VIEWS).unwrap();
         let x = views_rect.x + 2;
-        let y = views_rect.y + 2; // 第二行 = 实例（插在主界面之后）
+        let y = views_rect.y + 1; // 第一行 = 实例（启动默认视图）
         let ev = crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
             column: x,
@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(
             app.home_view,
             HomeView::Instance,
-            "点击视图第二项应切到实例"
+            "点击视图第一项应切到实例"
         );
         assert_eq!(app.wm.main_win, crate::app::win_id::INSTANCE);
     }
@@ -119,7 +119,7 @@ mod tests {
     async fn dock_then_undock_main_window() {
         let mut app = App::new_from(crate::storage::tmp_config_dir("ui")).unwrap();
         app.term_size = (100, 34);
-        assert_eq!(app.wm.main_win, crate::app::win_id::LOCAL);
+        assert_eq!(app.wm.main_win, crate::app::win_id::INSTANCE);
         // Ctrl+W → d 停靠本地 → 主区换到服务器
         app.handle_key(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('w'),
@@ -130,7 +130,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         ));
         assert!(
-            app.wm.windows[&crate::app::win_id::LOCAL].docked,
+            app.wm.windows[&crate::app::win_id::INSTANCE].docked,
             "本地应停靠"
         );
         // 断言「主区换到了别的视图」而不是「换到某一个具体视图」：
@@ -138,7 +138,7 @@ mod tests {
         // 之后那个「下一个」就变了。写死具体 id 会在每次加视图时静默失效。
         assert_ne!(
             app.wm.main_win,
-            crate::app::win_id::LOCAL,
+            crate::app::win_id::INSTANCE,
             "停靠本地后主区应换到别的视图"
         );
         // 关键不变式：主区窗口与 home_view 必须一致（否则拖动窗口会切错视图）
@@ -164,7 +164,7 @@ mod tests {
         ));
         assert_eq!(
             app.wm.active,
-            crate::app::win_id::LOCAL,
+            crate::app::win_id::INSTANCE,
             "Tab 可聚焦已停靠窗口"
         );
         // d 收回主区
@@ -172,9 +172,9 @@ mod tests {
             crossterm::event::KeyCode::Char('d'),
             crossterm::event::KeyModifiers::NONE,
         ));
-        assert!(!app.wm.windows[&crate::app::win_id::LOCAL].docked);
-        assert_eq!(app.wm.main_win, crate::app::win_id::LOCAL);
-        assert_eq!(app.home_view, HomeView::Local);
+        assert!(!app.wm.windows[&crate::app::win_id::INSTANCE].docked);
+        assert_eq!(app.wm.main_win, crate::app::win_id::INSTANCE);
+        assert_eq!(app.home_view, HomeView::Instance);
     }
 
     /// 「视图」选中行是整行底色块（经典主题 = 蓝底黑字），刷色中途只盖左边一段
@@ -187,7 +187,7 @@ mod tests {
         // 配色断言要独占调色板（换主题的测试并行跑会串味）
         let _palette = crate::theme::test_palette_guard();
         let mut app = App::new_from(crate::storage::tmp_config_dir("ui")).unwrap();
-        app.home_view = HomeView::Local;
+        app.home_view = HomeView::Instance;
         app.view_anim_start = None; // 静止态 = 刷满
         let buf = render(&mut app, 100, 34).buffer().clone();
         let line = |y: u16, buf: &Buffer| -> String {
@@ -203,8 +203,8 @@ mod tests {
                 .collect()
         };
         let y = (0..buf.area.height)
-            .find(|&y| flat(y, &buf).contains("主界面"))
-            .expect("dock 视图列表里应有「主界面」");
+            .find(|&y| flat(y, &buf).contains("实例alt+1"))
+            .expect("dock 视图列表里应有「实例」");
         // 「有选中底色」= 格子上真的铺了背景色（不写死经典主题的蓝：
         // 并行跑的换主题测试会改全局主题，写死就成竞态）
         let has_block =
@@ -631,7 +631,7 @@ mod extra_view_tests {
     #[tokio::test]
     async fn banner_shrinks_when_there_is_no_image() {
         let mut app = App::new_from(crate::storage::tmp_config_dir("ui")).unwrap();
-        app.home_view = HomeView::Local;
+        app.home_view = HomeView::Instance;
         app.sync_wm_from_view();
         app.banner_shot = None;
         let out = render(&mut app, 100, 40);
@@ -1089,8 +1089,8 @@ mod extra_view_tests {
         // 切字符串：ASCII 一刀两断；切口落在汉字中间时整个字归左边（宁可多盖一列）
         assert_eq!(split_cells("abc", 1), ("a".into(), "bc".into()));
         assert_eq!(split_cells("abc", 9), ("abc".into(), String::new()));
-        assert_eq!(split_cells("主界面", 3), ("主界".into(), "面".into()));
-        assert_eq!(split_cells("主界面", 0), (String::new(), "主界面".into()));
+        assert_eq!(split_cells("中文字", 3), ("中文".into(), "字".into()));
+        assert_eq!(split_cells("中文字", 0), (String::new(), "中文字".into()));
 
         // 切行：刷到的部分套选中块样式（底色 + 块上字色），没刷到的原样
         let plain = Style::default().fg(Color::Red);

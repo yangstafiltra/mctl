@@ -77,7 +77,7 @@ pub fn status_bar(frame: &mut Frame, app: &App, area: Rect) {
         // 正常模式提示（动态：随当前视图补专属键位）
         let k = &app.wm.keys;
         let view_hint = match app.home_view {
-            HomeView::Local | HomeView::Instance => "  [o]存档",
+            HomeView::Instance => "  [o]存档",
             HomeView::Server => "",
             HomeView::Resource => "  [/]搜索  [j/k]分类",
             HomeView::Download => "  [d]下载中心",
@@ -87,7 +87,7 @@ pub fn status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled(format!("[{}]调整  ", k.adjust_mode.label()), theme::dim()),
             Span::styled("[Alt+数字]切视图  ", theme::dim()),
-            Span::styled("[w]主界面  ", theme::dim()),
+            Span::styled("[w]实例  ", theme::dim()),
             Span::styled("[m]资源  ", theme::dim()),
             Span::styled("[Enter]执行  ", theme::dim()),
             Span::styled("[F]全屏面板  ", theme::dim()),
@@ -96,7 +96,7 @@ pub fn status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("[r]刷新  ", theme::dim()),
             Span::styled(view_hint, theme::dim()),
             Span::styled("[:]命令  ", theme::dim()),
-            Span::styled("[Alt+1-4]直达  ", theme::dim()),
+            Span::styled("[Alt+1-6]直达  ", theme::dim()),
             Span::styled("[q]退出", theme::dim()),
         ])
     };

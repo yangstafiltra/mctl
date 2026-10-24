@@ -11,7 +11,7 @@ use crate::domain::Credentials;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SessionState {
-    /// 上次主页视图 index（0=Local, 1=Server, 2=Rental, 3=Resource）
+    /// 上次视图 index（对应 `HomeView::ALL` 的顺序）
     pub home_view: usize,
     /// 上次选中的实例索引
     pub selected_instance: usize,

@@ -145,11 +145,10 @@ pub enum TaskMsg {
     LsFailed(String),
 }
 
-/// 主页视图（Tab/←→ 循环，替代原顶栏页面概念）
+/// 主视图（Alt+数字 / 视图侧栏切换）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeView {
-    Local,
-    /// 当前实例的内容（世界等）。按用户要求放在 Local 之后的第 2 位。
+    /// 当前实例的内容（世界等）。启动后的默认视图。
     Instance,
     Server,
     Resource,
@@ -161,8 +160,7 @@ pub enum HomeView {
 
 /// tui-wm 窗口 ID 常量
 pub mod win_id {
-    pub const LOCAL: u32 = 1;
-    /// 实例视图。id 取 7 而不是插在中间：已有 wm.toml 里按数字存了窗口，
+    /// 实例视图（启动默认）。id 取 7 而不是从 1 开始：旧 wm.toml 里按数字存了窗口，
     /// 重排会让所有窗口错位（比 Alt 快捷键后移更难排查）。
     pub const INSTANCE: u32 = 7;
     pub const SERVER: u32 = 2;
@@ -177,8 +175,7 @@ pub mod win_id {
 }
 
 impl HomeView {
-    pub const ALL: [HomeView; 7] = [
-        HomeView::Local,
+    pub const ALL: [HomeView; 6] = [
         HomeView::Instance,
         HomeView::Server,
         HomeView::Resource,
@@ -189,7 +186,6 @@ impl HomeView {
 
     pub fn label(self) -> &'static str {
         match self {
-            HomeView::Local => "主界面",
             HomeView::Instance => "实例",
             HomeView::Server => "服务器",
             HomeView::Resource => "资源下载",
@@ -202,7 +198,6 @@ impl HomeView {
     /// 视图栏图标（几何字符，等宽终端安全，避免 emoji 宽度问题）
     pub fn icon(self) -> &'static str {
         match self {
-            HomeView::Local => "▣",
             HomeView::Instance => "▥",
             HomeView::Server => "▤",
             HomeView::Resource => "⇩",
@@ -232,9 +227,8 @@ impl HomeFocus {
     /// 当前视图可聚焦面板（5 个不同面板，无重复，j/k 真正遍历所有）
     pub fn all_for(view: HomeView) -> [HomeFocus; 5] {
         match view {
-            // 实例视图和主界面一样是 banner + 世界列表，没有下载面板
-            HomeView::Local
-            | HomeView::Instance
+            // 实例视图是 banner + 世界列表，没有下载面板
+            HomeView::Instance
             | HomeView::Resource
             | HomeView::Download
             | HomeView::Plugins
@@ -268,7 +262,7 @@ impl HomeFocus {
 
     /// 从会话序号恢复（越界回退 List）
     pub fn from_index(i: usize) -> Self {
-        Self::all_for(HomeView::Local)
+        Self::all_for(HomeView::Instance)
             .get(i)
             .copied()
             .unwrap_or(HomeFocus::List)
@@ -1183,7 +1177,7 @@ impl App {
         // 凭据跟着 cfg 走：`new_from(临时目录)` 不该读到本机真实账号（测试卫生）
         let cred = storage::load_from(&cfg).ok();
         let mut app = Self {
-            home_view: HomeView::Local,
+            home_view: HomeView::Instance,
             quit: false,
             status: String::new(),
             instances: Vec::new(),
@@ -1425,7 +1419,6 @@ impl App {
         let mut wm = Wm::with_config(&cfg);
         // 主区视图窗口（可停靠；视图名侧栏已高亮，主区不重复占一行标题栏）
         for id in [
-            win_id::LOCAL,
             win_id::INSTANCE,
             win_id::SERVER,
             win_id::RESOURCE,
@@ -1460,7 +1453,7 @@ impl App {
                 wm.apply_opts_to(id, opts);
             }
         }
-        wm.focus(win_id::LOCAL);
+        wm.focus(win_id::INSTANCE);
         wm
     }
 
@@ -1473,7 +1466,7 @@ impl App {
             win_id::DOWNLOADS => HomeView::Download,
             win_id::PLUGINS => HomeView::Plugins,
             win_id::SETTINGS => HomeView::Settings,
-            _ => HomeView::Local,
+            _ => HomeView::Instance,
         };
         if self.home_view != view {
             self.set_home_view(view);
@@ -1673,7 +1666,7 @@ impl App {
         self.selected_world = self.selected_world.min(self.worlds.len().saturating_sub(1));
     }
 
-    // 循环切换主页视图（Tab/Shift+Tab）
+    // 循环切换主视图（Tab/Shift+Tab）
     // ===== j/k = 面板焦点轮换（类似 Tab 切视图，循环遍历所有面板）=====
 
     /// j: 下一个面板（循环）
@@ -1726,8 +1719,8 @@ impl App {
             return;
         }
         match self.home_view {
-            // 实例视图同样渲染 worlds_panel，↑↓ 选世界要同样生效
-            HomeView::Local | HomeView::Instance => match self.home_focus {
+            // 实例视图渲染 worlds_panel，↑↓ 选世界
+            HomeView::Instance => match self.home_focus {
                 HomeFocus::List => {
                     if self.selected_world > 0 {
                         self.selected_world -= 1;
@@ -1778,7 +1771,7 @@ impl App {
             return;
         }
         match self.home_view {
-            HomeView::Local | HomeView::Instance => match self.home_focus {
+            HomeView::Instance => match self.home_focus {
                 HomeFocus::List => {
                     if self.selected_world + 1 < self.worlds.len() {
                         self.selected_world += 1;
@@ -3047,7 +3040,7 @@ impl App {
         self.sel_anim_start = Some(std::time::Instant::now());
     }
 
-    /// 换主页视图的**唯一入口**：真的换了才重放「视图」选中块的刷色动画。
+    /// 换主视图的**唯一入口**：真的换了才重放「视图」选中块的刷色动画。
     /// 只负责切视图本身（主题/侧栏刷新等副作用由调用方接着做）。
     pub fn set_home_view(&mut self, view: HomeView) {
         if self.home_view != view {
@@ -4465,7 +4458,7 @@ impl App {
         self.handle_global_key(key);
     }
 
-    /// Alt+1..4 直达主页视图（终端把 Alt 拆成 Esc+字符时由 main 循环调用）
+    /// Alt+1..6 直达主视图（终端把 Alt 拆成 Esc+字符时由 main 循环调用）
     pub fn switch_view_alt(&mut self, c: char) {
         if !c.is_ascii_digit() {
             return;
@@ -4497,7 +4490,6 @@ impl App {
     /// HomeView → 主区窗口 id
     pub fn view_win_id(&self) -> u32 {
         match self.home_view {
-            HomeView::Local => win_id::LOCAL,
             HomeView::Instance => win_id::INSTANCE,
             HomeView::Server => win_id::SERVER,
             HomeView::Resource => win_id::RESOURCE,
@@ -4507,7 +4499,7 @@ impl App {
         }
     }
 
-    /// 账户面板聚焦时回车：登录项选择（Local/Server 两视图共用一份）。
+    /// 账户面板聚焦时回车：登录项选择（实例/服务器两视图共用一份）。
     /// /// 原本这段 39 行在三个 Enter 分支里逐字重复了三遍——改一处忘另外两处，
     /// 是最典型的重复代码陷阱。
     fn key_enter_accounts(&mut self) {
@@ -4841,7 +4833,7 @@ impl App {
             }
             (KeyCode::Char('m'), _) => self.enter_maps(),
             (KeyCode::Char('w'), _) => {
-                self.set_home_view(HomeView::Local);
+                self.set_home_view(HomeView::Instance);
                 self.sync_wm_from_view();
             }
             // o = 打开当前实例的存档目录
@@ -4909,7 +4901,7 @@ impl App {
                 };
             }
             (KeyCode::Char('r'), _) => match self.home_view {
-                HomeView::Local => self.refresh_worlds(),
+                HomeView::Instance => self.refresh_worlds(),
                 HomeView::Server => self.spawn_load_servers(),
                 _ => {}
             },
@@ -4921,9 +4913,9 @@ impl App {
             (KeyCode::Left, _) if !self.maps_owns_arrows() => self.move_content_left(),
             (KeyCode::Right, _) if !self.maps_owns_arrows() => self.move_content_right(),
 
-            // 主界面/实例视图：回车直进选中世界（其他聚焦面板回车不启动游戏）
+            // 实例视图：回车直进选中世界（其他聚焦面板回车不启动游戏）
             (KeyCode::Enter, KeyModifiers::NONE)
-                if matches!(self.home_view, HomeView::Local | HomeView::Instance) =>
+                if self.home_view == HomeView::Instance =>
             {
                 if self.home_focus == HomeFocus::List {
                     if let Some(w) = self.worlds.get(self.selected_world) {
@@ -5870,7 +5862,7 @@ async fn launch_instance_inner(
 impl tui_wm_core::WmHost for App {
     fn render_window(&mut self, frame: &mut ratatui::Frame, id: u32, area: ratatui::layout::Rect) {
         match id {
-            win_id::LOCAL | win_id::INSTANCE | win_id::SERVER => {
+            win_id::INSTANCE | win_id::SERVER => {
                 crate::ui::home::draw_view(frame, self, self.home_view, area);
             }
             win_id::RESOURCE => crate::ui::maps::draw(frame, self, area),
@@ -6220,9 +6212,9 @@ mod tests {
             assert_eq!(app.home_view, v, "Alt+{} 应直达 {}", slot, v.label());
         }
         // 非数字的 Alt 组合不应被误当作切视图
-        app.home_view = HomeView::Local;
+        app.home_view = HomeView::Instance;
         app.handle_key(alt('j'));
-        assert_eq!(app.home_view, HomeView::Local, "Alt+j 不应切视图");
+        assert_eq!(app.home_view, HomeView::Instance, "Alt+j 不应切视图");
     }
 
     #[tokio::test]
@@ -6258,7 +6250,7 @@ mod tests {
         )
         .unwrap();
         let a = App::new_from(dir.clone()).unwrap();
-        assert_eq!(a.home_view, HomeView::Local, "越界视图回落默认");
+        assert_eq!(a.home_view, HomeView::Instance, "越界视图回落默认");
         assert_eq!(a.source, ResourceSource::NetEase, "越界来源回落默认");
         assert_eq!(
             a.category,
@@ -6285,7 +6277,7 @@ mod tests {
         assert_eq!(b.role_name, "老版本");
         assert_eq!(
             b.home_view,
-            HomeView::Local,
+            HomeView::Instance,
             "缺失字段回落默认值而非清空整份"
         );
     }
@@ -6617,7 +6609,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = app();
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
-        assert_eq!(app.home_view, HomeView::Local, "Shift+Tab 不该再切视图");
+        assert_eq!(app.home_view, HomeView::Instance, "Shift+Tab 不该再切视图");
     }
 
     /// 设置项「选中框动画」：关了 = 进度恒 1（框直接完整出现）、不再要求高帧重绘
