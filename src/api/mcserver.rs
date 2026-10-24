@@ -239,7 +239,7 @@ pub async fn probe(query: &str) -> Result<JavaServer> {
 
 /// 一次 ping 的原始结果
 #[derive(Debug, Clone)]
-struct Pong {
+pub struct Pong {
     version: String,
     protocol: i64,
     online: i64,

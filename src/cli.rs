@@ -26,7 +26,7 @@ use anyhow::{anyhow, bail, Result};
 
 use crate::api;
 use crate::domain::{
-    ALL_CATEGORIES, CATEGORY_MAPS_ADVENTURE, CATEGORY_MAPS_MINIGAME, CATEGORY_MODS,
+    CATEGORY_MAPS_ADVENTURE, CATEGORY_MAPS_MINIGAME, CATEGORY_MODS,
     CATEGORY_SHADERS, CATEGORY_SKINS,
 };
 use crate::launcher::modpack::{ModpackHit, ModrinthIndex, MrVersion};
@@ -287,7 +287,7 @@ pub async fn run(args: &[String]) -> Result<()> {
     dispatch(ctx, cmd, args.get(i + 1..).unwrap_or(&[])).await
 }
 
-/// 只有「顶层上下文名」才算前缀；`list`/`salt` 这些全局命令不受影响。
+/// 只有「顶层上下文名」才算前缀；`list` 这些全局命令不受影响。
 /// `/` 与 `~` 是根的一次性写法（例如在 /plugin 下用 `mctl / install` 调全局安装）。
 fn is_context_prefix(s: &str) -> bool {
     matches!(s, "/" | "~")
@@ -346,7 +346,6 @@ fn is_global_verb(s: &str) -> bool {
             | "-V"
             | "--version"
             | "login"
-            | "salt"
             | "install"
             | "bedrock"
             | "token"
@@ -400,7 +399,6 @@ async fn dispatch(ctx: Ctx, cmd: &str, rest: &[String]) -> Result<()> {
         }
         "cli" | "shell" => return Box::pin(shell()).await,
         "login" => return login_cmd(rest).await,
-        "salt" => return salt_cmd(rest).await,
         "install" => return install_cmd(rest).await,
         "bedrock" => return bedrock_cmd(rest).await,
         "token" => return token_cmd(rest),
@@ -2099,62 +2097,6 @@ async fn login_cmd(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
-async fn salt_cmd(rest: &[String]) -> Result<()> {
-    // 探测 crc_salt：挨个候选跑到 Initialize 为止。
-    // mctl salt 试全部候选（缓存命中值优先）；mctl salt <值> 额外再试一个。
-    // 判定：Initialize 通过 = salt 正确；被拒(status!=0) = salt 不对。只读诊断，**不写缓存**。
-    let cred =
-        storage::load().map_err(|e| anyhow!("读取凭据失败（先跑 `mctl login` 登录）: {e}"))?;
-    let extra = rest.first().map(String::as_str);
-    let list = crate::netease::yggdrasil::salt_candidates(extra);
-    // 诊断用：gameId 从参数取（`mctl salt <盐> <游戏id>`），不写死任何一个服的 id
-    let game_id = rest.get(1).map(String::as_str).unwrap_or("0");
-    let profile = crate::netease::yggdrasil::make_profile_with_game(
-        &api::netease::EntityUserInfo {
-            user_id: cred.user_id.clone(),
-            token: cred.user_token.clone(),
-        },
-        game_id,
-        api::LATEST_VERSION,
-        "[]",
-    );
-    println!(
-        "凭据 ok (userId={})  gameVersion={}  候选 {} 个",
-        cred.user_id,
-        api::LATEST_VERSION,
-        list.len()
-    );
-    let mut hit: Option<&String> = None;
-    for (i, salt) in list.iter().enumerate() {
-        print!("[{:>2}/{}] {:<34} ", i + 1, list.len(), salt);
-        let _ = io::stdout().flush();
-        match crate::netease::yggdrasil::probe_salt(&profile, salt).await {
-            Ok(()) => {
-                println!("✓ Initialize 通过 —— salt 正确");
-                hit = Some(salt);
-            }
-            Err(e) => {
-                let msg = format!("{e:#}");
-                if msg.contains("初始化失败") {
-                    println!("✗ 被拒（{msg}）");
-                } else {
-                    // 没走到 status 判定就断了：连不上 / 协议变了，
-                    // 这时「salt 对不对」根本无从谈起
-                    println!("? 探测本身失败: {msg}");
-                }
-            }
-        }
-    }
-    match hit {
-        Some(s) => println!("\n命中: {s}\n把它挪到 SALT_CANDIDATES 首位即可。"),
-        None => println!(
-            "\n无一通过。若原因都是「被拒」，说明网易轮换过 salt，候选表已失效；\n\
-             可用 `mctl salt <新值>` 试单个值。否则是探测链路本身坏了，先看上面的 ? 行。"
-        ),
-    }
-    Ok(())
-}
-
 async fn install_cmd(rest: &[String]) -> Result<()> {
     // 实测安装流程（含并发下载）: mctl install <版本id> [mc_dir]
     let id = rest.first().ok_or_else(|| anyhow!("缺少版本 id"))?;
@@ -2307,7 +2249,7 @@ fn help(ctx: &Ctx) -> Result<()> {
     println!("├─ tree             完整命令树");
     println!("└─ help             本层帮助");
     println!();
-    println!("全局命令: status version login salt install bedrock dl token cli");
+    println!("全局命令: status version login install bedrock dl token cli");
     println!("一次性执行: `mctl <路径> <命令>`（不改当前位置）");
     Ok(())
 }
@@ -2376,7 +2318,7 @@ fn print_tree(cur: &Ctx) -> Result<()> {
     println!("   └─ remove <名称>");
     println!();
     println!("全局命令（任何层可用）:");
-    println!("  cd pwd help tree status version login salt install bedrock dl token cli");
+    println!("  cd pwd help tree status version login install bedrock dl token cli");
     println!("一步到位: mctl local/1.21.1 list · mctl server/mc.hypixel.net info");
     println!("交互式: mctl cli，prompt 形如 mctl@用户名:/resource/netease>，exit 退出");
     println!("无参数运行 mctl 进入 TUI。");

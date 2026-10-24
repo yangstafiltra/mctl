@@ -4,7 +4,6 @@
 pub mod java;
 pub mod meta;
 pub mod modpack;
-pub mod netease;
 mod version;
 
 use std::io::Write;
@@ -254,62 +253,7 @@ pub(crate) async fn download_to(
     Ok(())
 }
 
-/// 可续传版本的 `download_to`：同一目标路径上若留着上次中断的 `.tmp`，
-/// 带 `Range` 从断点接着下；服务端不认 Range（回 200）就从头来。
-/// 只给「下完会做 md5 校验」的整包用——半截文件由 md5 兜底，不会静默成功。
-pub(crate) async fn download_to_resumable(
-    client: &reqwest::Client,
-    url: &str,
-    target: &Path,
-    mut on_tick: impl FnMut(u64, u64),
-) -> Result<()> {
-    let parent = target.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let tmp = target.with_extension("tmp");
-    let have = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
-    let mut req = client.get(url);
-    if have > 0 {
-        req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("请求失败: {url}"))?;
-    if !resp.status().is_success() {
-        return Err(anyhow!("HTTP {}: {}", resp.status(), url));
-    }
-    // 只有 206 才是真的接着下；200 说明服务端忽略了 Range，得清空重来
-    let resumed = have > 0 && resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
-    let body_total = resp.content_length().unwrap_or(0);
-    let total = if resumed { have + body_total } else { body_total };
-    let (mut file, mut done) = if resumed {
-        let f = std::fs::OpenOptions::new().append(true).open(&tmp)?;
-        (f, have)
-    } else {
-        (std::fs::File::create(&tmp)?, 0u64)
-    };
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk)?;
-        done += chunk.len() as u64;
-        on_tick(done, total);
-    }
-    file.flush()?;
-    drop(file);
-    if total > 0 && done != total {
-        return Err(anyhow!("长度不符: 收到 {done} / 声明 {total}（{url}）"));
-    }
-    std::fs::rename(&tmp, target)?;
-    Ok(())
-}
-
 /// 下载：官方源为准，镜像（若配置）先试；连接层抖动自动重试。
-/// 两个修复针对实测：
-/// 1. 原实现 `last_err = e` 覆盖，只留最后一个错误。镜像源 302 跳境外中转被重置，
-/// 失败信息被吞，只剩官方源的错，日志满屏官方 URL，误导排查方向。
-/// 现在两侧错误都留，标明来源。
-/// 2. 官方源 assets 小文件跨洋要 1.8~3s/个，3911 个资源必须能自愈重试。
 async fn download_fallback(
     client: &reqwest::Client,
     mirror_url: Option<&str>,
@@ -362,6 +306,73 @@ const FABRIC_MAVEN: &str = "https://maven.fabricmc.net";
 /// 同时下载的文件数上限。8 是实测可用值：再高会顶到本机 DNS 解析能力。
 const DOWNLOAD_CONCURRENCY: usize = 8;
 
+/// 可续传下载（仅测试覆盖）：同一目标路径上若留着上次中断的 `.tmp`，
+/// 带 `Range` 从断点接着下；服务端不认 Range（回 200）就从头来。
+#[cfg(test)]
+pub(crate) async fn download_to_resumable(
+    client: &reqwest::Client,
+    url: &str,
+    target: &Path,
+    mut on_tick: impl FnMut(u64, u64),
+) -> Result<()> {
+    let parent = target.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let tmp = target.with_extension("tmp");
+    let have = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+    let mut req = client.get(url);
+    if have > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
+    }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("请求失败: {url}"))?;
+    if !resp.status().is_success() {
+        return Err(anyhow!("HTTP {}: {}", resp.status(), url));
+    }
+    let resumed = have > 0 && resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let body_total = resp.content_length().unwrap_or(0);
+    let total = if resumed { have + body_total } else { body_total };
+    let (mut file, mut done) = if resumed {
+        let f = std::fs::OpenOptions::new().append(true).open(&tmp)?;
+        (f, have)
+    } else {
+        (std::fs::File::create(&tmp)?, 0u64)
+    };
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk)?;
+        done += chunk.len() as u64;
+        on_tick(done, total);
+    }
+    file.flush()?;
+    drop(file);
+    if total > 0 && done != total {
+        return Err(anyhow!("长度不符: 收到 {done} / 声明 {total}（{url}）"));
+    }
+    std::fs::rename(&tmp, target)?;
+    Ok(())
+}
+
+/// 文件 md5（仅测试覆盖；小写十六进制，流式读）
+#[cfg(test)]
+pub(crate) fn md5_file(path: &Path) -> Result<String> {
+    use md5::{Digest as _, Md5};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut h = Md5::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", h.finalize()))
+}
+
 /// 镜像源：环境变量 `MCTL_MIRROR` 指定，**默认不启用镜像**。
 /// 实测 镜像源（曾经的默认值）在境内已不可用：`/assets/...` 返回 302 跳到
 /// `bmclapi2.sakura.sld.tw` → `bmclapi4.sakura.sld.tw`，连接被对方重置。
@@ -391,7 +402,7 @@ pub(crate) fn http_client() -> reqwest::Client {
         .clone()
 }
 
-/// 大文件下载客户端：总超时放宽到 30 分钟（网易客户端 base/版本包上百 MB，
+/// 大文件下载客户端：总超时放宽到 30 分钟（游戏版本包上百 MB，
 /// 120s 的默认总超时会在慢速链路上半路掐断）。同样复用连接池。
 pub(crate) fn http_client_big() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -405,23 +416,6 @@ pub(crate) fn http_client_big() -> reqwest::Client {
                 .unwrap_or_else(|_| reqwest::Client::new())
         })
         .clone()
-}
-
-/// 文件 md5（小写十六进制，流式读——别把上百 MB 读进内存）
-pub(crate) fn md5_file(path: &Path) -> Result<String> {
-    use md5::{Digest as _, Md5};
-    use std::io::Read;
-    let mut f = std::fs::File::open(path)?;
-    let mut h = Md5::new();
-    let mut buf = vec![0u8; 1 << 20];
-    loop {
-        let n = f.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        h.update(&buf[..n]);
-    }
-    Ok(format!("{:x}", h.finalize()))
 }
 
 /// 展示用短名：maven 坐标只留最后两段
@@ -923,472 +917,6 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// 网易客户端专属启动命令（实测）：
-/// jvm 参数 = 网易 json `jvm_arguments` 原样（相对路径→绝对、-Xmx 替换、
-/// `-Djava.library.path` 覆盖为 natives）+ 附加 launcherControlPort/launcherGameId/
-/// userId/Token/Server/runtime_path；游戏参数 = `parameter_arguments` 占位替换
-/// （auth_player_name/auth_uuid/auth_access_token、gameDir/assetsDir 绝对化）
-/// + --server/--port + --userProperties/--userPropertiesEx（网易 UI 判定渠道的关键）。
-/// 网易 json 无老格式参数时回退标准 build_launch_command 逻辑（已由调用方保证有）。
-pub fn build_netease_command(
-    root: &Path,
-    version: &str,
-    java: &Path,
-    memory_mb: u32,
-    username: &str,
-    role_uuid: &str,
-    host: &str,
-    port: u16,
-    user_id: &str,
-    encrypt_token: &str,
-    game_id: &str,
-    auth_port: u16,
-    rpc_port: u16,
-    game_dir: &Path,
-    assets_dir: &Path,
-) -> Result<Command> {
-    let json_path = root
-        .join("versions")
-        .join(version)
-        .join(format!("{version}.json"));
-    let text = std::fs::read_to_string(&json_path)?;
-    let vj: serde_json::Value = serde_json::from_str(&text)?;
-    let jvm_str = vj["jvm_arguments"]
-        .as_str()
-        .ok_or_else(|| anyhow!("{version} json 缺少 jvm_arguments（非网易客户端？）"))?;
-    let pa_str = vj["parameter_arguments"]
-        .as_str()
-        .ok_or_else(|| anyhow!("{version} json 缺少 parameter_arguments（非网易客户端？）"))?;
-    let natives_dir = root.join("versions").join(version).join("natives");
-
-    // 相对路径（libraries\a.jar;versions\1.20\1.20.jar）→ 绝对（root 前缀 + / 分隔）
-    let absolutize = |v: &str| -> String {
-        v.split(';')
-            .map(|item| {
-                if item.starts_with('/') {
-                    item.to_string()
-                } else {
-                    root.join(item.replace('\\', "/"))
-                        .to_string_lossy()
-                        .into_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(if std::path::MAIN_SEPARATOR == '/' {
-                ":"
-            } else {
-                ";"
-            })
-    };
-
-    // ---- JVM 参数（实测）----
-    let toks: Vec<&str> = jvm_str.split_whitespace().collect();
-    // 网易串末尾即 mainClass（cpw.mods.bootstraplauncher.BootstrapLauncher）
-    let main_class = toks
-        .last()
-        .ok_or_else(|| anyhow!("jvm_arguments 为空"))?
-        .to_string();
-    let mut jvm: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i + 1 < toks.len() {
-        let t = toks[i];
-        if t == "-cp" || t == "-p" {
-            if let Some(v) = toks.get(i + 1) {
-                jvm.push(t.to_string());
-                jvm.push(absolutize(v));
-                i += 2;
-                continue;
-            }
-        }
-        if t.strip_prefix("-Djava.library.path=").is_some() {
-            // ：覆盖为 natives 解压目录（网易原值是 Windows bin\... 相对路径）
-            jvm.push(format!("-Djava.library.path={}", natives_dir.display()));
-        } else if let Some(v) = t.strip_prefix("-DlibraryDirectory=") {
-            jvm.push(format!(
-                "-DlibraryDirectory={}",
-                root.join(v.replace('\\', "/")).display()
-            ));
-        } else if t.starts_with("-Xmx") && t.len() > 4 {
-            jvm.push(format!("-Xmx{memory_mb}M"));
-        } else {
-            jvm.push(t.to_string());
-        }
-        i += 1;
-    }
-    // 附加：网易通道 + 认证 + 运行环境（放在 mainClass 前）
-    jvm.push(format!("-DlauncherControlPort={auth_port}"));
-    jvm.push(format!("-DlauncherGameId={game_id}"));
-    jvm.push(format!("-DuserId={user_id}"));
-    jvm.push(format!("-DToken={encrypt_token}"));
-    jvm.push("-DServer=RELEASE".to_string());
-    jvm.push(format!("-Druntime_path={}/runtime", natives_dir.display()));
-    // 不强制系统 libglfw：网易 natives 即 LWJGL 3.3.1 官方 native（3.4.0，Wayland
-    // 后端支持），保留 WAYLAND_DISPLAY 走 Wayland 原生后端（实测）。
-    // 02:10 实测：强制 /usr/lib/libglfw.so.3.4 + 移除 WAYLAND_DISPLAY →
-    // XWayland X11 后端 → glfwWaitEventsTimeout SIGSEGV（hs_err_pid218709）。
-
-    // ---- 游戏参数（parameter_arguments 占位替换 + 网易直连附加）----
-    let ptoks: Vec<&str> = pa_str.split_whitespace().collect();
-    let mut game: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < ptoks.len() {
-        let t = ptoks[i];
-        match t {
-            "--username" | "--uuid" | "--accessToken" | "--gameDir" | "--assetsDir" => {
-                let raw = ptoks.get(i + 1).copied().unwrap_or("");
-                let val = raw
-                    .replace("${auth_player_name}", username)
-                    .replace("${auth_uuid}", role_uuid)
-                    .replace("${auth_access_token}", "0");
-                let val = match t {
-                    "--gameDir" => game_dir.to_string_lossy().into_owned(),
-                    "--assetsDir" => assets_dir.to_string_lossy().into_owned(),
-                    _ => val,
-                };
-                game.push(t.to_string());
-                game.push(val);
-                i += 2;
-            }
-            _ => {
-                game.push(
-                    ptoks[i]
-                        .replace("${auth_player_name}", username)
-                        .replace("${auth_uuid}", role_uuid)
-                        .replace("${auth_access_token}", "0"),
-                );
-                i += 1;
-            }
-        }
-    }
-    // 附加：直连服务器 + 网易渠道身份（网易 mod 据此进入联机模式）
-    // filterkey = 32 位随机小写（实测）
-    let filter_key: String = {
-        use rand::Rng;
-        let mut rng = rand::rng();
-        (0..32)
-            .map(|_| (b'a' + rng.random_range(0..26)) as char)
-            .collect()
-    };
-    game.push("--server".to_string());
-    game.push(host.to_string());
-    game.push("--port".to_string());
-    game.push(port.to_string());
-    game.push("--userProperties".to_string());
-    game.push(format!(
-        "{{\"uid\":[{user_id},0],\"gameid\":[0,0],\"launcherport\":[{rpc_port},0],\"filterkey\":[\"{filter_key}\",\"0\"],\"filterpath\":[\"\",\"0\"],\"timedelta\":[0,0],\"launchversion\":[\"{}\",\"0\"]}}",
-        crate::api::netease::x19_version()
-    ));
-    game.push("--userPropertiesEx".to_string());
-    game.push(format!(
-        "{{\"GameType\":2,\"isFilter\":true,\"channel\":\"netease\",\"timedelta\":0,\"launcherVersion\":\"{}\"}}",
-        crate::api::netease::x19_version()
-    ));
-
-    // 附加：BootstrapLauncher 的目标主类 + macOS 先行线程模式（Linux 忽略），
-    // 缺失时 BootstrapLauncher 会把 --username 当主类 → ClassNotFoundException
-    game.insert(0, "-XstartOnFirstThread".to_string());
-    game.insert(0, "net.minecraft.client.main.Main".to_string());
-
-    let mut cmd = Command::new(java);
-    // 工作目录 = 客户端根：部分 mod（ixeris/heypixel 等）按 cwd 写配置，
-    // 不设就会落在「启动器当时所在目录」（实测把 config/ heypixel/ 写进了用户的工作目录）
-    cmd.current_dir(root);
-    cmd.args(&jvm).arg(&main_class).args(&game);
-    // 保留 WAYLAND_DISPLAY：GLFW 3.4（网易 natives 自带）选 Wayland 原生后端，
-    // 与 一致；移除会退化到 XWayland X11 后端并 SIGSEGV（02:10 实测）
-    Ok(cmd)
-}
-
-/// 「正常匹配池」启动前自检项（对应 `建议/02` P0-3 的 7 条硬约束）。
-#[derive(Debug, Clone)]
-pub struct PreflightCheck {
-    /// 约束编号（1..=7，与 `建议/02` 表格一致）
-    pub no: u8,
-    /// 约束名（中文简述）
-    pub name: &'static str,
-    /// 是否满足
-    pub ok: bool,
-    /// 不满足时是否阻断启动（false = 仅提醒）
-    pub blocking: bool,
-    /// 失败原因（中文）
-    pub detail: String,
-}
-
-fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
-    args.iter()
-        .position(|a| a == key)
-        .and_then(|i| args.get(i + 1))
-        .map(|s| s.as_str())
-}
-
-/// 对网易启动命令做「进正常匹配池」自检（`建议/02` P0-3）：
-///
-/// 社区旧方案用「休眠离线参数」（假 uuid、缺认证）也能进服，但只会进黑屋（低优先匹配池）。
-/// mctl 明确不走这条路：任一**阻断级**约束不满足就报错，宁可失败也不骗进黑屋。
-/// 第 6 条（官方同构 runtime）目前只提醒：mctl 走系统 Java，官方 runtime 层见 P1-6。
-pub fn netease_preflight(args: &[String]) -> Vec<PreflightCheck> {
-    let mut checks: Vec<PreflightCheck> = Vec::new();
-
-    let up_raw = arg_value(args, "--userProperties").unwrap_or("");
-    let up: Option<serde_json::Value> = serde_json::from_str(up_raw).ok();
-    let up_obj = up.as_ref().and_then(|v| v.as_object());
-
-    // 1. userProperties 单层 JSON、gameid==[0,0]；真实服务器 id 只走 -DlauncherGameId
-    {
-        let mut problems: Vec<String> = Vec::new();
-        match up_obj {
-            None => problems.push("userProperties 不是单层 JSON（解析失败或被转义成双层）".into()),
-            Some(v) => {
-                let gameid_ok = v
-                    .get("gameid")
-                    .and_then(|g| g.as_array())
-                    .map(|a| a.len() == 2 && a.iter().all(|x| x.as_i64() == Some(0)))
-                    .unwrap_or(false);
-                if !gameid_ok {
-                    problems
-                        .push("gameid 不是 [0,0]（填 64 位真实 id 会让客户端 Gson 解析崩）".into());
-                }
-                for k in [
-                    "uid",
-                    "gameid",
-                    "launcherport",
-                    "filterkey",
-                    "filterpath",
-                    "timedelta",
-                    "launchversion",
-                ] {
-                    if v.get(k).is_none() {
-                        problems.push(format!("缺字段 {k}"));
-                    }
-                }
-            }
-        }
-        if up_raw.contains("\\\"") {
-            problems.push("值含转义引号（疑似双层 JSON，网易客户端只认单层）".into());
-        }
-        let game_id_set = args.iter().any(|a| {
-            a.strip_prefix("-DlauncherGameId=")
-                .is_some_and(|v| !v.is_empty())
-        });
-        if !game_id_set {
-            problems.push("缺少 -DlauncherGameId=<服务器 item id>".into());
-        }
-        checks.push(PreflightCheck {
-            no: 1,
-            name: "userProperties.gameid=[0,0] 且真实 gameId 走 -DlauncherGameId",
-            ok: problems.is_empty(),
-            blocking: true,
-            detail: if problems.is_empty() {
-                "单层 JSON、字段齐全".into()
-            } else {
-                problems.join("；")
-            },
-        });
-    }
-
-    // 2. filterkey 恰 32 字节小写（长度不符会被 AESHelper 原样返回 → Native 当词库加载崩）
-    {
-        let fk = up_obj
-            .and_then(|v| v.get("filterkey"))
-            .and_then(|f| f.as_array())
-            .and_then(|a| a.first())
-            .and_then(|x| x.as_str());
-        let ok = fk.is_some_and(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_lowercase()));
-        let detail = match fk {
-            None => {
-                "userProperties.filterkey 缺失（长度不符时客户端原样返回密文 → Native 崩）".into()
-            }
-            Some(s) if !ok => format!("filterkey 长度 {}（必须恰 32 字节小写）", s.len()),
-            Some(_) => "32 字节小写".into(),
-        };
-        checks.push(PreflightCheck {
-            no: 2,
-            name: "filterkey 恰 32 字节小写",
-            ok,
-            blocking: true,
-            detail,
-        });
-    }
-
-    // 3. --username=角色名、--uuid=32 位无横线（Skip32(角色名+uid)）
-    {
-        let username = arg_value(args, "--username").unwrap_or("");
-        let uuid = arg_value(args, "--uuid").unwrap_or("");
-        let mut problems: Vec<String> = Vec::new();
-        if username.is_empty() {
-            problems.push("--username 为空".into());
-        }
-        if uuid.len() != 32 || !uuid.bytes().all(|b| b.is_ascii_hexdigit()) {
-            problems.push(format!(
-                "--uuid 必须 32 位无横线十六进制（当前 {} 字节）",
-                uuid.len()
-            ));
-        }
-        checks.push(PreflightCheck {
-            no: 3,
-            name: "--username=角色名 / --uuid 32 位无横线",
-            ok: problems.is_empty(),
-            blocking: true,
-            detail: if problems.is_empty() {
-                "角色名与 Skip32 uuid 就位".into()
-            } else {
-                problems.join("；")
-            },
-        });
-    }
-
-    // 4. --accessToken：≥1.18 用 "0"，否则随机 32 hex
-    {
-        let token = arg_value(args, "--accessToken").unwrap_or("");
-        let ok =
-            token == "0" || (token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit()));
-        checks.push(PreflightCheck {
-            no: 4,
-            name: "--accessToken 官方值（≥1.18 为 \"0\"）",
-            ok,
-            blocking: true,
-            detail: if ok {
-                "符合官方行为".into()
-            } else {
-                format!("当前 {token:?}（≥1.18 必须为 \"0\"，老版本为 32 位 hex）")
-            },
-        });
-    }
-
-    // 5. -Druntime_path 在游戏参数之前；参数内联（Native 用 GetCommandLine，@argfile 读不到）
-    {
-        let rp_idx = args.iter().position(|a| a.starts_with("-Druntime_path="));
-        let game_start = args
-            .iter()
-            .position(|a| a == "net.minecraft.client.main.Main")
-            .or_else(|| args.iter().position(|a| a == "--username"));
-        let mut problems: Vec<String> = Vec::new();
-        match rp_idx {
-            None => problems.push("缺少 -Druntime_path".into()),
-            Some(r) => match game_start {
-                None => problems.push("找不到游戏参数起点（mainClass/--username）".into()),
-                Some(g) if r > g => problems.push(
-                    "-Druntime_path 必须在游戏参数之前（否则 X19 DLL preInit 抛异常）".into(),
-                ),
-                Some(_) => {}
-            },
-        }
-        if args.iter().any(|a| a.starts_with('@')) {
-            problems.push("存在 @argfile 参数（Native 用 GetCommandLine 读不到，必须内联）".into());
-        }
-        checks.push(PreflightCheck {
-            no: 5,
-            name: "-Druntime_path 在游戏参数前 / 参数内联",
-            ok: problems.is_empty(),
-            blocking: true,
-            detail: if problems.is_empty() {
-                "顺序与内联方式正确".into()
-            } else {
-                problems.join("；")
-            },
-        });
-    }
-
-    // 6. 官方同构 runtime（jdk17 + 官方认证文件）：目前只提醒（mctl 走系统 Java，见 P1-6）
-    {
-        let runtime_dir = args
-            .iter()
-            .find_map(|a| a.strip_prefix("-Druntime_path="))
-            .map(Path::new);
-        let lib_dir = args
-            .iter()
-            .find_map(|a| a.strip_prefix("-Djava.library.path="))
-            .map(Path::new);
-        let runtime_ok = runtime_dir.is_some_and(|p| p.is_dir());
-        let lib_ok = lib_dir.is_some_and(|p| p.is_dir());
-        let mut problems: Vec<String> = Vec::new();
-        if !runtime_ok {
-            problems.push("runtime_path 目录不存在".into());
-        }
-        if !lib_ok {
-            problems.push("java.library.path 目录不存在".into());
-        }
-        let ok = problems.is_empty();
-        checks.push(PreflightCheck {
-            no: 6,
-            name: "官方同构 runtime（告警级）",
-            ok,
-            blocking: false,
-            detail: if ok {
-                "runtime 目录就位（注意：仍是系统 Java，官方同构 runtime 见 P1-6）".into()
-            } else {
-                format!(
-                    "{}；缺官方同构 runtime（jdk17 + 官方认证文件）可能进黑屋（P1-6）",
-                    problems.join("；")
-                )
-            },
-        });
-    }
-
-    // 7. GameType:2 + channel=netease + 认证链端口分置（launcherControlPort ≠ launcherport）
-    {
-        let ex: Option<serde_json::Value> =
-            serde_json::from_str(arg_value(args, "--userPropertiesEx").unwrap_or("")).ok();
-        let mut problems: Vec<String> = Vec::new();
-        match ex.as_ref().and_then(|v| v.as_object()) {
-            None => problems.push("userPropertiesEx 不是单层 JSON".into()),
-            Some(v) => {
-                if v.get("GameType").and_then(|x| x.as_i64()) != Some(2) {
-                    problems.push("GameType 必须为 2（离线参数只能进黑屋）".into());
-                }
-                if v.get("channel").and_then(|x| x.as_str()) != Some("netease") {
-                    problems.push("channel 必须为 netease".into());
-                }
-            }
-        }
-        let auth_port = args
-            .iter()
-            .find_map(|a| a.strip_prefix("-DlauncherControlPort="))
-            .and_then(|v| v.parse::<u16>().ok());
-        if auth_port.is_none() {
-            problems.push("缺少 -DlauncherControlPort（AuthLib 进服认证）".into());
-        }
-        let rpc_port = up_obj
-            .and_then(|v| v.get("launcherport"))
-            .and_then(|p| p.as_array())
-            .and_then(|a| a.first())
-            .and_then(|x| x.as_i64())
-            .map(|x| x as u16);
-        if rpc_port.is_none() {
-            problems.push("userProperties.launcherport 缺失".into());
-        }
-        if let (Some(a), Some(r)) = (auth_port, rpc_port) {
-            if a == r {
-                problems.push(
-                    "launcherControlPort 与 launcherport 同端口（两套帧格式不可同端口）".into(),
-                );
-            }
-        }
-        checks.push(PreflightCheck {
-            no: 7,
-            name: "GameType:2 认证链 + 双端口分置",
-            ok: problems.is_empty(),
-            blocking: true,
-            detail: if problems.is_empty() {
-                "联机身份与双端口就位".into()
-            } else {
-                problems.join("；")
-            },
-        });
-    }
-
-    checks
-}
-
-/// 便捷封装：自检一条已组装好的启动命令（`std::process::Command`）。
-pub fn check_netease_command(cmd: &Command) -> Vec<PreflightCheck> {
-    let args: Vec<String> = cmd
-        .get_args()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
-    netease_preflight(&args)
-}
-
 /// 组装启动命令（只替换，不真正启动）
 pub fn build_launch_command(
     mc_dir: &Path,
@@ -1540,276 +1068,6 @@ mod tests {
             java_major: 21,
             dir,
         }
-    }
-
-    #[test]
-    fn netease_command_shape() {
-        // 需要一个已安装的网易客户端样本（网易包 versions/<id>/<id>.json 结构特殊）。
-        // 没有就跳过：CI / 别的机器不该依赖本机游戏目录；
-        // 想指定样本目录就用环境变量 MCTL_TEST_NETEASE_ROOT。
-        let root = std::env::var_os("MCTL_TEST_NETEASE_ROOT")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| crate::storage::config_dir().join(".minecraft/netease"));
-        let root = root.as_path();
-        if !root.join("versions/1.20/1.20.json").is_file() {
-            eprintln!("skip: 未找到网易客户端样本（MCTL_TEST_NETEASE_ROOT 可指定）");
-            return;
-        }
-        let cmd = build_netease_command(
-            root,
-            "1.20",
-            std::path::Path::new("/usr/bin/java"),
-            2048,
-            "Steve",
-            "0123456789abcdef0123456789abcdef",
-            "mc.example.com",
-            25565,
-            "123456789",
-            "DEADBEEF",
-            // game_id = 服务器 item id（样本用假值；实跑时来自平台列表）
-            "1234567890",
-            11413, // launcherControlPort = AuthLib 进服认证
-            11414, // launcherport        = RPC/皮肤 socket（必须与上面分置）
-            root,
-            &root.join("assets"),
-        )
-        .unwrap();
-        // 工作目录 = 客户端根：mod（ixeris/heypixel 等）按 cwd 写配置，
-        // 不设就会写进「启动器当时所在目录」
-        assert_eq!(cmd.get_current_dir(), Some(root), "游戏 cwd 应为客户端根");
-        let args: Vec<String> = cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        let joined = args.join(" ");
-        // mainClass：网易 json jvm_arguments 末尾（forge 加载器），仅出现一次
-        assert_eq!(
-            args.iter()
-                .filter(|a| a.contains("BootstrapLauncher"))
-                .count(),
-            1,
-            "mainClass 应恰好出现一次: {joined}"
-        );
-        // forge 加载参数（标准 arguments 缺失 → 国际版界面的根因）
-        assert!(joined.contains("--launchTarget forgeclient"), "{joined}");
-        assert!(joined.contains("--fml.forgeVersion"), "{joined}");
-        // 网易渠道身份（网易 mod 判定联机模式的依据）
-        assert!(joined.contains("channel\":\"netease"), "{joined}");
-        assert!(joined.contains("--userProperties"), "{joined}");
-        // 网易通道附加 -D（实测）
-        assert!(joined.contains("-DlauncherGameId=1234567890"), "{joined}");
-        assert!(joined.contains("-DuserId=123456789"), "{joined}");
-        assert!(joined.contains("-DServer=RELEASE"), "{joined}");
-        assert!(joined.contains("-DlauncherControlPort=11413"), "{joined}");
-        // launcherport（RPC 服务端口）必须与 -DlauncherControlPort 分置（两套帧格式不同）
-        let up = joined
-            .split("--userProperties ")
-            .nth(1)
-            .unwrap_or("")
-            .split(" --userPropertiesEx")
-            .next()
-            .unwrap_or("");
-        assert!(
-            up.contains("\"launcherport\":[11414,0]"),
-            "launcherport 应为 RPC 端口: {joined}"
-        );
-        assert!(
-            !joined.contains("-DlauncherControlPort=11414"),
-            "-DlauncherControlPort 与 launcherport 不能同端口: {joined}"
-        );
-        // gameid 必须是可解析的 [0,0]：真实服务器 id 只走 -DlauncherGameId
-        // （userProperties 不能改成双层 JSON，网易客户端只认单层）
-        assert!(
-            up.contains("\"gameid\":[0,0]"),
-            "userProperties.gameid 必须为 [0,0]: {joined}"
-        );
-        assert!(
-            regex::Regex::new(r#"filterkey":\["[a-z]{32}","0"\]"#)
-                .unwrap()
-                .is_match(up),
-            "filterkey 应为 32 位随机小写: {joined}"
-        );
-        // 直连服务器 + natives 覆盖 + classpath 绝对化
-        assert!(
-            joined.contains("--server mc.example.com --port 25565"),
-            "{joined}"
-        );
-        assert!(joined.contains("-Djava.library.path="), "{joined}");
-        assert!(
-            !joined.contains("libraries\\"),
-            "Windows 反斜杠路径未绝对化: {joined}"
-        );
-        assert!(joined.contains(root.to_string_lossy().as_ref()), "{joined}");
-        // 占位符替换：用户名/角色 uuid/accessToken
-        assert!(joined.contains("--username Steve"), "{joined}");
-        assert!(
-            joined.contains("--uuid 0123456789abcdef0123456789abcdef"),
-            "{joined}"
-        );
-        assert!(joined.contains("--accessToken 0"), "{joined}");
-        assert!(!joined.contains("${"), "残留占位符: {joined}");
-        // 分隔符与主类（实测）
-        assert!(!joined.contains(";"), "-cp/-p 不应含 ';' 分隔符: {joined}");
-        assert!(
-            joined
-                .contains("BootstrapLauncher net.minecraft.client.main.Main -XstartOnFirstThread"),
-            "缺启动主类参数: {joined}"
-        );
-        // 不强制系统 glfw（实测）
-        assert!(
-            !joined.contains("org.lwjgl.glfw.libname"),
-            "不应加载系统 glfw: {joined}"
-        );
-        // P0-3 启动前自检：真实命令（样本）不得有阻断级失败
-        let checks = check_netease_command(&cmd);
-        let blocking: Vec<_> = checks.iter().filter(|c| !c.ok && c.blocking).collect();
-        assert!(blocking.is_empty(), "自检阻断级失败: {blocking:?}");
-        assert!(checks.iter().any(|c| c.no == 1 && c.ok), "{checks:?}");
-    }
-
-    /// 合法自检参数样本（与 build_netease_command 产物同形）
-    fn valid_preflight_args(runtime_root: &Path) -> Vec<String> {
-        [
-            "-DlauncherControlPort=11413".to_string(),
-            "-DlauncherGameId=1234567890".to_string(),
-            "-DuserId=123456789".to_string(),
-            "-DToken=DEADBEEF".to_string(),
-            "-DServer=RELEASE".to_string(),
-            format!("-Druntime_path={}/runtime", runtime_root.display()),
-            format!("-Djava.library.path={}", runtime_root.display()),
-            "cpw.mods.bootstraplauncher.BootstrapLauncher".to_string(),
-            "net.minecraft.client.main.Main".to_string(),
-            "-XstartOnFirstThread".to_string(),
-            "--username".to_string(),
-            "Steve".to_string(),
-            "--uuid".to_string(),
-            "0123456789abcdef0123456789abcdef".to_string(),
-            "--accessToken".to_string(),
-            "0".to_string(),
-            "--server".to_string(),
-            "mc.example.com".to_string(),
-            "--port".to_string(),
-            "25565".to_string(),
-            "--userProperties".to_string(),
-            "{\"uid\":[123456789,0],\"gameid\":[0,0],\"launcherport\":[11414,0],\"filterkey\":[\"abcdefghijklmnopqrstuvwxyzabcdef\",\"0\"],\"filterpath\":[\"\",\"0\"],\"timedelta\":[0,0],\"launchversion\":[\"1.20\",\"0\"]}".to_string(),
-            "--userPropertiesEx".to_string(),
-            "{\"GameType\":2,\"isFilter\":true,\"channel\":\"netease\",\"timedelta\":0,\"launcherVersion\":\"1.20\"}".to_string(),
-        ]
-        .to_vec()
-    }
-
-    fn preflight_no(checks: &[PreflightCheck], no: u8) -> PreflightCheck {
-        checks
-            .iter()
-            .find(|c| c.no == no)
-            .unwrap_or_else(|| panic!("缺少第 {no} 条自检"))
-            .clone()
-    }
-
-    #[test]
-    fn netease_preflight_all_green() {
-        let base = std::env::temp_dir().join("mctl_test_preflight_ok");
-        std::fs::create_dir_all(base.join("runtime")).unwrap();
-        let args = valid_preflight_args(&base);
-        let checks = netease_preflight(&args);
-        assert_eq!(checks.len(), 7);
-        assert!(
-            checks.iter().all(|c| c.ok),
-            "应全绿: {:?}",
-            checks.iter().filter(|c| !c.ok).collect::<Vec<_>>()
-        );
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn netease_preflight_rejects_black_room_variants() {
-        let base = std::env::temp_dir().join("mctl_test_preflight_bad");
-        std::fs::create_dir_all(base.join("runtime")).unwrap();
-        let good = valid_preflight_args(&base);
-
-        // 1. gameid 填 64 位真实 id（客户端按 int 解析会崩）
-        {
-            let mut a = good.clone();
-            let i = a.iter().position(|x| x == "--userProperties").unwrap() + 1;
-            a[i] = a[i].replace("gameid\":[0,0]", "gameid\":[1234567890123,0]");
-            let c = preflight_no(&netease_preflight(&a), 1);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 1b. 缺 -DlauncherGameId
-        {
-            let a: Vec<String> = good
-                .iter()
-                .filter(|x| !x.starts_with("-DlauncherGameId="))
-                .cloned()
-                .collect();
-            let c = preflight_no(&netease_preflight(&a), 1);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 2. filterkey 不是 32 字节小写
-        {
-            let mut a = good.clone();
-            let i = a.iter().position(|x| x == "--userProperties").unwrap() + 1;
-            a[i] = a[i].replace("abcdefghijklmnopqrstuvwxyzabcdef", "abc");
-            let c = preflight_no(&netease_preflight(&a), 2);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 3. uuid 带横线（写死假 uuid 会确定性崩溃）
-        {
-            let mut a = good.clone();
-            let i = a.iter().position(|x| x == "--uuid").unwrap() + 1;
-            a[i] = "01234567-89ab-cdef-0123-456789abcdef".into();
-            let c = preflight_no(&netease_preflight(&a), 3);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 4. accessToken 非官方值
-        {
-            let mut a = good.clone();
-            let i = a.iter().position(|x| x == "--accessToken").unwrap() + 1;
-            a[i] = "zzz".into();
-            let c = preflight_no(&netease_preflight(&a), 4);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 5. -Druntime_path 挪到游戏参数之后（顺序敏感：X19 DLL preInit 抛异常）
-        {
-            let mut a: Vec<String> = good
-                .iter()
-                .filter(|x| !x.starts_with("-Druntime_path="))
-                .cloned()
-                .collect();
-            a.push(format!("-Druntime_path={}/runtime", base.display()));
-            let c = preflight_no(&netease_preflight(&a), 5);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 5b. @argfile（Native 用 GetCommandLine 读不到）
-        {
-            let mut a = good.clone();
-            a.push("@launch_args.txt".into());
-            let c = preflight_no(&netease_preflight(&a), 5);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 7. GameType 改成 1（离线参数只能进黑屋）
-        {
-            let mut a = good.clone();
-            let i = a.iter().position(|x| x == "--userPropertiesEx").unwrap() + 1;
-            a[i] = a[i].replace("\"GameType\":2", "\"GameType\":1");
-            let c = preflight_no(&netease_preflight(&a), 7);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 7b. 双端口同端口（两套帧格式不可同端口）
-        {
-            let mut a = good.clone();
-            let i = a.iter().position(|x| x == "--userProperties").unwrap() + 1;
-            a[i] = a[i].replace("launcherport\":[11414,0]", "launcherport\":[11413,0]");
-            let c = preflight_no(&netease_preflight(&a), 7);
-            assert!(!c.ok && c.blocking, "{c:?}");
-        }
-        // 6. runtime 目录缺失只提醒、不阻断（P1-6）
-        {
-            let a = valid_preflight_args(Path::new("/nonexistent/mctl_runtime_probe"));
-            let c = preflight_no(&netease_preflight(&a), 6);
-            assert!(!c.ok && !c.blocking, "{c:?}");
-        }
-        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

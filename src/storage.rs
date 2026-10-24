@@ -249,9 +249,6 @@ pub struct Recents {
     /// 进过的 Java 国际服（旧版本叫 netease_servers，用 alias 兼容老 recents.json）
     #[serde(default, alias = "netease_servers")]
     pub java_servers: Vec<RecentItem>,
-    /// 网易租赁服
-    #[serde(default)]
-    pub rentals: Vec<RecentItem>,
     /// 已下载的资源
     #[serde(default)]
     pub downloads: Vec<RecentItem>,

@@ -42,11 +42,6 @@ pub enum TaskMsg {
         index: usize,
         img: Option<image::DynamicImage>,
     },
-    /// 租赁服网格封面加载完成
-    RentalCoverLoaded {
-        index: usize,
-        img: Option<image::DynamicImage>,
-    },
     /// 网易资源 BE（基岩版）检查完成（None=请求失败）
     BeChecked { index: usize, be: Option<bool> },
     /// Modrinth 封面图下载完成
@@ -122,43 +117,8 @@ pub enum TaskMsg {
     FileProgress { id: u64, f: launcher::FileProgress },
     /// 安装完成
     InstallDone { id: u64, result: Result<String> },
-    /// 联机页：租赁服列表加载完成
-    /// 租赁服列表加载完成（带请求时的榜单：切榜期间的旧响应直接丢弃）
-    OnlineListLoaded {
-        feed: crate::api::netease::RentalFeed,
-        result: Result<Vec<crate::api::netease::EntityRentalGame>>,
-    },
-    /// 租赁服编号搜索完成（query 与当前搜索词不符的旧响应直接丢弃）
-    OnlineSearchLoaded {
-        query: String,
-        result: Result<Vec<crate::api::netease::EntityRentalGame>>,
-    },
-    /// 租赁服收藏操作完成（is_favorite=None 表示失败，不动列表）
-    RentalFavoriteDone {
-        server_id: String,
-        is_favorite: Option<bool>,
-        message: String,
-    },
-    /// 租赁服点赞切换完成（like=None 表示失败/状态未知，不动列表）
-    RentalLikeDone {
-        server_id: String,
-        like: Option<bool>,
-        message: String,
-    },
-    /// 租赁服开服/关服完成（status=None 表示失败，不动列表）
-    RentalPowerDone {
-        server_id: String,
-        status: Option<i64>,
-        message: String,
-    },
-    /// 联机页：一键启动完成（进程 PID）
-    OnlineDone(Result<u32>),
-    /// 联机页：租赁服进服阶段进度
-    OnlineStage(String),
     /// 服务器页：Java 国际服列表 + 状态 ping 完成
     ServerListLoaded(Vec<crate::api::mcserver::JavaServer>),
-    /// 服务器页：进服阶段进度
-    ServerStage(String),
     /// 服务器页：一键进服完成（进程 PID）
     ServerDone(Result<u32>),
     /// 服务器页：横幅宣传图加载完成
@@ -531,11 +491,9 @@ fn send_file_progress(tx: &mpsc::Sender<TaskMsg>, id: u64, f: launcher::FileProg
     }
 }
 
-/// 阶段文本去哪个状态行（联机进服 / 租赁服 / 本地实例各一个消息变体）
+/// 阶段文本去哪个状态行（目前只有本地实例启动）
 #[derive(Clone, Copy)]
 enum StageSink {
-    Server,
-    Online,
     Launch,
 }
 
@@ -569,8 +527,6 @@ fn report_stage(
     let tx = tx.clone();
     tokio::spawn(async move {
         let msg = match sink {
-            StageSink::Server => TaskMsg::ServerStage(text),
-            StageSink::Online => TaskMsg::OnlineStage(text),
             StageSink::Launch => TaskMsg::LaunchStage(text),
         };
         let _ = tx.send(msg).await;
@@ -616,50 +572,6 @@ impl NeteaseSort {
 pub enum Focus {
     Sidebar,
     Grid,
-}
-
-/// 联机页（Tab::Online）状态：租赁服列表 + 一键启动
-#[derive(Default)]
-pub struct OnlinePage {
-    pub servers: Vec<crate::api::netease::EntityRentalGame>,
-    pub loading: bool,
-    pub selected: usize,
-    /// 卡片网格可视窗口起点（UI 每帧校正，选中项跟着滑动而不是整页跳）
-    pub scroll: usize,
-    pub status: String,
-    pub launching: bool,
-    /// 当前榜单/来源（[ / ] 切换）：综合 / 最新 / 最热 / 好友 / 收藏 / 最近 / 我的
-    pub feed: crate::api::netease::RentalFeed,
-    /// 联的时候发现「当前环境没提供」的来源（网关回 404 网页）：
-    /// 记住它，别每次换过去都白跑一趟请求（实网：收藏 / 最近访问在 OBT 上 404）
-    pub dead_feeds: Vec<crate::api::netease::RentalFeed>,
-    /// 密码浮层确认后暂存的一次性密码：`spawn_online_launch` 取走即清，
-    /// 不落盘、不复用，避免下次误连别的服时把密码带过去
-    pub pending_pwd: Option<String>,
-    /// 列表没标 has_pwd、但启动时被接口回过「密码错误」的服：
-    /// 记住它，下次回车先弹密码框（官方「我的租赁服」条目不带 has_pwd）
-    pub pwd_required: Vec<String>,
-    /// 本次启动的服 id（错误回来时用来把「密码错误」记到正确的服上）
-    pub launch_server: Option<String>,
-    /// 当前环境没上点赞接口（实网 OBT：`rental-like/*` 404）：
-    /// 记住后不再发请求，标题里也撤掉 `t 点赞` 的提示
-    pub like_dead: bool,
-    /// 编号搜索输入态（`/` 进入）：字符直入 `query`
-    pub searching: bool,
-    /// 搜索输入缓冲
-    pub query: String,
-    /// 当前生效的搜索词（Some = 列表来自搜索，不是榜单）；`[ ]` 换榜会清掉
-    pub search: Option<String>,
-}
-
-/// 租赁服密码输入浮层：列表项 `has_pwd == "1"` 时，回车先弹这个。
-/// 只存内存，随输入浮层关闭而丢弃。
-#[derive(Debug, Clone)]
-pub struct PwdPrompt {
-    /// 打开浮层时选中的服：输入期间就算列表被换掉，确认后仍连这一个
-    pub server_id: String,
-    pub title: String,
-    pub input: String,
 }
 
 /// LittleSkin OAuth 状态（账户面板）：应用登记 + 设备码流登录
@@ -725,10 +637,7 @@ pub struct VersionItem {
 pub enum RecentKind {
     /// Java 国际服（host:port）
     JavaServer,
-    Rental,
     Download,
-    /// 存档。id 用 "<实例 id>/<世界名>"，概览卡片按实例分组显示
-    World,
 }
 
 /// 设置页可编辑字段。
@@ -1089,10 +998,8 @@ pub struct App {
     /// 联机服务器 / 租赁服网格封面（索引与列表一一对应，同资源大厅卡片）
     pub srv_covers: Vec<Option<StatefulProtocol>>,
     pub srv_cover_queue: Vec<usize>,
-    /// 联机服务器确实没有宣传图（拉过详情也没图）→ 卡片退回纯文字
+    /// 服务器没有 favicon → 卡片退回纯文字
     pub srv_cover_none: Vec<bool>,
-    pub rental_covers: Vec<Option<StatefulProtocol>>,
-    pub rental_cover_queue: Vec<usize>,
     /// 网易网格 BE（基岩版）标记缓存（None=未检查或检查失败）
     pub grid_be: Vec<Option<bool>>,
     pub be_queue: Vec<usize>,
@@ -1156,9 +1063,8 @@ pub struct App {
     pub sel_anim_start: Option<std::time::Instant>,
     /// 服务器/租赁服卡片网格当前列数（UI 每帧回填，↑↓ 按它跳一行）
     pub server_grid_cols: usize,
-    /// 联机服务器卡片网格的可视窗口起点（UI 每帧校正；租赁服的在 `online.scroll`）
+    /// 联机服务器卡片网格的可视窗口起点（UI 每帧校正）
     pub srv_scroll: usize,
-    pub online_task_id: Option<u64>,
     /// 设置项：世界选中框描边动画开关（默认开，存 settings.json 的 `world_anim`）
     pub world_anim: bool,
     /// 设置项：主题 id（`theme::theme_ids` 里的取值，默认 "mctl" 经典）
@@ -1166,8 +1072,6 @@ pub struct App {
     /// 主题选择器浮层（设置页「主题」行 Enter 打开）：Some = 开着，
     /// ↑↓ 即时预览、Enter 确定、Esc 还原
     pub theme_picker: Option<ThemePicker>,
-    /// 租赁服密码输入浮层：Some = 等着用户输入，此时按键只进输入框
-    pub pwd_prompt: Option<PwdPrompt>,
     /// Modrinth 分类（MODRINTH_CATEGORIES 索引）
     pub mr_category: usize,
     /// Modrinth 搜索输入态（/ 进入）
@@ -1196,8 +1100,6 @@ pub struct App {
     pub ascii_always: bool,
     /// 主页完整日志视图开关
     pub home_log_full: bool,
-    /// 联机页状态
-    pub online: OnlinePage,
     /// LittleSkin OAuth 应用登记状态
     pub ls: LsPage,
     /// 横幅游戏截图（自动截图任务产出，按世界存档分目录，screenshots 用户图不参与）
@@ -1334,8 +1236,6 @@ impl App {
             srv_covers: Vec::new(),
             srv_cover_queue: Vec::new(),
             srv_cover_none: Vec::new(),
-            rental_covers: Vec::new(),
-            rental_cover_queue: Vec::new(),
             grid_be: Vec::new(),
             be_queue: Vec::new(),
             be_tries: Vec::new(),
@@ -1381,11 +1281,9 @@ impl App {
             sel_anim_start: None,
             server_grid_cols: 3,
             srv_scroll: 0,
-            online_task_id: None,
             world_anim: true,
             theme: crate::theme::LEGACY_ID.to_string(),
             theme_picker: None,
-            pwd_prompt: None,
             mr_category: 0,
             mr_searching: false,
             mr_loaded: false,
@@ -1401,7 +1299,6 @@ impl App {
             next_task_id: 1,
             ascii_always: false,
             home_log_full: false,
-            online: OnlinePage::default(),
             ls: LsPage::default(),
             banner_shot: None,
             avatar: None,
@@ -2169,22 +2066,6 @@ impl App {
         });
     }
 
-    /// 租赁服卡片封面（列表项自带的宣传图 URL）
-    pub fn spawn_rental_cover(&mut self, index: usize) {
-        let url = match self.online.servers.get(index).map(|s| s.image_url.clone()) {
-            Some(u) if !u.is_empty() => u,
-            _ => return,
-        };
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            let img = match api::get_bytes(&url).await {
-                Ok(bytes) => image::load_from_memory(&bytes).ok(),
-                Err(_) => None,
-            };
-            let _ = tx.send(TaskMsg::RentalCoverLoaded { index, img }).await;
-        });
-    }
-
     /// 检查网易资源是否为基岩版（download_info 的 mc_version_name 以 100. 开头）
     pub fn spawn_be_check(&mut self, index: usize) {
         let Some(item) = self.grid_items.get(index) else {
@@ -2911,520 +2792,6 @@ impl App {
         id
     }
 
-    /// 联机页：加载租赁服列表（按当前榜单/来源）
-    pub fn spawn_load_online(&mut self) {
-        if self.online.loading {
-            return;
-        }
-        // 搜索态下按 r = 「按同一编号重搜」，不要退回榜单
-        if let Some(q) = self.online.search.clone() {
-            self.online.query = q;
-            self.spawn_search_rental();
-            return;
-        }
-        let Some(cred) = self.cred.clone() else {
-            self.online.status = "未登录，请先在 资源(M) 页登录".into();
-            return;
-        };
-        // 已知该来源在当前环境不存在（404）：不重复请求，直接说清楚
-        if self.online.dead_feeds.contains(&self.online.feed) {
-            self.online.servers.clear();
-            self.online.status = format!(
-                "{}：当前环境未提供该来源（按 [ ] 换榜）",
-                self.online.feed.label()
-            );
-            return;
-        }
-        self.online.loading = true;
-        self.online.status = format!("加载租赁服（{}）…", self.online.feed.label());
-        let tx = self.tx.clone();
-        let user_id = cred.user_id.clone();
-        let user_token = cred.user_token.clone();
-        let feed = self.online.feed;
-        tokio::spawn(async move {
-            let result = crate::api::netease::rental_feed(&user_id, &user_token, feed, 0).await;
-            let _ = tx.send(TaskMsg::OnlineListLoaded { feed, result }).await;
-        });
-    }
-
-    /// 租赁服编号搜索：只认数字房号（展示名不参与匹配，实网验证）。
-    /// 搜索期间 `[ ]` 换榜会清掉搜索状态，避免「以为是榜单其实是搜索结果」。
-    pub fn spawn_search_rental(&mut self) {
-        if self.online.loading {
-            return;
-        }
-        let q = self.online.query.trim().to_string();
-        if q.is_empty() {
-            self.online.status = "请输入租赁服编号（房号，如 57229664）".into();
-            return;
-        }
-        let Some(cred) = self.cred.clone() else {
-            self.online.status = "未登录，请先在 资源(M) 页登录".into();
-            return;
-        };
-        self.online.loading = true;
-        self.online.search = Some(q.clone());
-        self.online.status = format!("搜索租赁服 {q}…");
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            let result =
-                crate::api::netease::rental_search(&cred.user_id, &cred.user_token, &q, 0).await;
-            let _ = tx
-                .send(TaskMsg::OnlineSearchLoaded { query: q, result })
-                .await;
-        });
-    }
-
-    /// 编号搜索返回：只认当前搜索词的响应（输入期间改词/换榜的旧响应丢弃）
-    pub fn on_online_search_loaded(
-        &mut self,
-        query: String,
-        result: Result<Vec<crate::api::netease::EntityRentalGame>>,
-    ) {
-        if self.online.search.as_deref() != Some(query.as_str()) {
-            return;
-        }
-        self.online.loading = false;
-        match result {
-            Ok(list) => {
-                let n = list.len();
-                self.online.servers = list;
-                self.online.selected = 0;
-                self.online.scroll = 0;
-                self.online.status = if n == 0 {
-                    format!("没有找到编号 {query} 的租赁服（按 [ ] 退出搜索）")
-                } else {
-                    format!("编号 {query}：{n} 个结果 · 回车连接")
-                };
-            }
-            Err(e) => {
-                self.online.servers.clear();
-                self.online.status = format!("搜索失败: {e}");
-            }
-        }
-    }
-
-    /// 联机页：[ / ] 换榜。切榜会清空并重拉，选中项回到第一格。
-    pub fn switch_rental_feed(&mut self, delta: isize) {
-        let all = crate::api::netease::RentalFeed::ALL;
-        let idx = all
-            .iter()
-            .position(|f| *f == self.online.feed)
-            .unwrap_or(0) as isize;
-        let next = (idx + delta).rem_euclid(all.len() as isize) as usize;
-        self.online.feed = all[next];
-        // 换榜 = 退出搜索（否则会出现「榜单标题 + 搜索结果」的错位）
-        self.online.search = None;
-        self.online.searching = false;
-        self.online.query.clear();
-        self.online.servers.clear();
-        self.online.selected = 0;
-        self.online.scroll = 0;
-        self.online.loading = false;
-        self.online.status = format!("切换到 {}（按 r 重载）", self.online.feed.label());
-        self.spawn_load_online();
-    }
-
-    /// 联机页：收藏 / 取消收藏选中租赁服（先查当前状态再取反）。
-    /// 收藏榜里取消收藏会把那张卡从列表摘掉（见 `on_rental_favorite_done`）。
-    pub fn toggle_rental_favorite(&mut self) {
-        let Some(cred) = self.cred.clone() else {
-            self.online.status = "未登录，无法收藏".into();
-            return;
-        };
-        let Some(server) = self.online.servers.get(self.online.selected).cloned() else {
-            self.online.status = "没有可收藏的租赁服".into();
-            return;
-        };
-        let id = server.entity_id.clone();
-        let name = server.server_name.clone();
-        let tx = self.tx.clone();
-        self.online.status = format!("正在切换收藏：{name}…");
-        tokio::spawn(async move {
-            let r = crate::api::netease::rental_toggle_favorite(
-                &cred.user_id,
-                &cred.user_token,
-                &id,
-            )
-            .await;
-            let (is_favorite, message) = match r {
-                Ok(v) => (
-                    Some(v),
-                    format!("{}：{name}", if v { "已收藏" } else { "已取消收藏" }),
-                ),
-                Err(e) => (None, format!("收藏操作失败：{e}")),
-            };
-            let _ = tx
-                .send(TaskMsg::RentalFavoriteDone {
-                    server_id: id,
-                    is_favorite,
-                    message,
-                })
-                .await;
-        });
-    }
-
-    /// 收藏操作完成：收藏榜里取消收藏 → 摘卡并收拢选中；失败只改状态栏
-    pub fn on_rental_favorite_done(
-        &mut self,
-        server_id: &str,
-        is_favorite: Option<bool>,
-        message: String,
-    ) {
-        self.online.status = message;
-        if is_favorite != Some(false) || self.online.feed != crate::api::netease::RentalFeed::Favorite
-        {
-            return;
-        }
-        let Some(i) = self
-            .online
-            .servers
-            .iter()
-            .position(|s| s.entity_id == server_id)
-        else {
-            return;
-        };
-        self.online.servers.remove(i);
-        let n = self.online.servers.len();
-        if n == 0 {
-            self.online.selected = 0;
-            self.online.scroll = 0;
-        } else if self.online.selected >= n {
-            self.online.selected = n - 1;
-        }
-        self.bump_sel_anim();
-    }
-
-    /// 联机页：点赞 / 取消点赞选中租赁服（先查状态再取反；状态拿不到就不动手）
-    pub fn toggle_rental_like(&mut self) {
-        if self.online.like_dead {
-            self.online.status =
-                "当前环境不提供点赞接口（已记住，不再发请求）· 回车直接进服".into();
-            return;
-        }
-        let Some(cred) = self.cred.clone() else {
-            self.online.status = "未登录，无法点赞".into();
-            return;
-        };
-        let Some(server) = self.online.servers.get(self.online.selected).cloned() else {
-            self.online.status = "没有可点赞的租赁服".into();
-            return;
-        };
-        let id = server.entity_id.clone();
-        let name = server.title().to_string();
-        let tx = self.tx.clone();
-        self.online.status = format!("正在切换点赞：{name}…");
-        tokio::spawn(async move {
-            let r = crate::api::netease::rental_toggle_like(&cred.user_id, &cred.user_token, &id)
-                .await;
-            let (like, message) = match r {
-                Ok(v) => (
-                    Some(v),
-                    format!("{}：{name}", if v { "已点赞" } else { "已取消点赞" }),
-                ),
-                Err(e) => (None, format!("点赞操作失败：{e}")),
-            };
-            let _ = tx
-                .send(TaskMsg::RentalLikeDone {
-                    server_id: id,
-                    like,
-                    message,
-                })
-                .await;
-        });
-    }
-
-    /// 点赞结果：列表里的点赞数就地 ±1（不等重新拉列表），失败/未知不动
-    pub fn on_rental_like_done(&mut self, server_id: &str, like: Option<bool>, message: String) {
-        // 网关回 404 网页 → 本环境没上这个接口：记住，别让用户每按一次 t 都白跑
-        if message.contains("当前环境不可用") {
-            self.online.like_dead = true;
-        }
-        self.online.status = message;
-        let Some(liked) = like else { return };
-        if let Some(s) = self
-            .online
-            .servers
-            .iter_mut()
-            .find(|s| s.entity_id == server_id)
-        {
-            // 服务端计数可能与我们看到的不是同一次快照，只做「至少不为负」的保守调整
-            s.like_num = if liked {
-                s.like_num.saturating_add(1)
-            } else {
-                (s.like_num - 1).max(0)
-            };
-        }
-    }
-
-    /// 联机页：开服 / 关服选中租赁服（只能对自己的服操作，所以仅「我的租赁服」榜生效）。
-    /// 状态取列表项的 status（0=已关闭 1=运行中，与 control/update 同一套取值），
-    /// 其它取值说明状态不是这两档，交给官方启动器处理，mctl 不猜。
-    pub fn toggle_rental_power(&mut self) {
-        let Some(cred) = self.cred.clone() else {
-            self.online.status = "未登录，无法开服/关服".into();
-            return;
-        };
-        if self.online.feed != crate::api::netease::RentalFeed::Mine {
-            self.online.status = "只有「我的租赁服」榜能开服/关服（按 ] 切过去）".into();
-            return;
-        }
-        let Some(server) = self.online.servers.get(self.online.selected).cloned() else {
-            self.online.status = "没有选中的租赁服".into();
-            return;
-        };
-        let name = server.title().to_string();
-        let Some(want) = server.power_toggle() else {
-            self.online.status = format!(
-                "{name} 的当前状态不是「已关闭/运行中」（status={}），到官方启动器里看一眼，mctl 不乱动",
-                server.status
-            );
-            return;
-        };
-        let id = server.entity_id.clone();
-        let tx = self.tx.clone();
-        self.online.status = format!("正在{}：{name}…", crate::api::netease::control_word(want));
-        tokio::spawn(async move {
-            let r = crate::api::netease::rental_control_set(
-                &cred.user_id,
-                &cred.user_token,
-                &id,
-                want,
-            )
-            .await;
-            let word = crate::api::netease::control_word(want);
-            let (status, message) = match r {
-                Ok(()) => (
-                    Some(want),
-                    format!("{word}请求已发送：{name}（开停要等几秒，按 r 刷新状态）"),
-                ),
-                Err(e) => (None, format!("{word}失败：{e}")),
-            };
-            let _ = tx
-                .send(TaskMsg::RentalPowerDone {
-                    server_id: id,
-                    status,
-                    message,
-                })
-                .await;
-        });
-    }
-
-    /// 开服/关服结果：列表项就地改成新状态（不等重新拉列表），状态栏给文案
-    pub fn on_rental_power_done(&mut self, server_id: &str, status: Option<i64>, message: String) {
-        self.online.status = message;
-        if let Some(st) = status {
-            if let Some(s) = self
-                .online
-                .servers
-                .iter_mut()
-                .find(|s| s.entity_id == server_id)
-            {
-                s.status = st;
-            }
-        }
-    }
-
-    /// 回车进入租赁服：加密服先弹密码浮层，普通服直接启动。
-    /// 登录态/空列表的提示留在 `spawn_online_launch`，这里只决定「要不要先问密码」。
-    pub fn open_pwd_prompt(&mut self) {
-        if self.online.launching {
-            return;
-        }
-        let Some(server) = self.online.servers.get(self.online.selected) else {
-            self.online.status = "无可启动的服务器".into();
-            return;
-        };
-        if server.has_pwd != "1" && !self.online.pwd_required.contains(&server.entity_id) {
-            self.spawn_online_launch();
-            return;
-        }
-        self.pwd_prompt = Some(PwdPrompt {
-            server_id: server.entity_id.clone(),
-            title: server.title().to_string(),
-            input: String::new(),
-        });
-    }
-
-    /// 租赁服编号搜索输入态：字符直入，Enter 搜索、Esc 取消。
-    fn key_rental_search(&mut self, key: crossterm::event::KeyEvent) {
-        use crossterm::event::{KeyCode, KeyModifiers};
-        match key.code {
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.online.query.push(c);
-            }
-            KeyCode::Backspace => {
-                self.online.query.pop();
-            }
-            KeyCode::Enter => {
-                self.online.searching = false;
-                self.spawn_search_rental();
-            }
-            KeyCode::Esc => self.online.searching = false,
-            _ => {}
-        }
-    }
-
-    /// 记下「这个服需要密码」：列表没带 has_pwd 时由启动错误回填。
-    pub fn set_pwd_required(&mut self, server_id: &str) {
-        if !self.online.pwd_required.iter().any(|id| id == server_id) {
-            self.online.pwd_required.push(server_id.to_string());
-        }
-    }
-
-    /// 密码浮层按键：字符直入（掩码显示），Enter 连接，Esc 取消。
-    fn handle_pwd_prompt_key(&mut self, key: crossterm::event::KeyEvent) {
-        use crossterm::event::{KeyCode, KeyModifiers};
-        match key.code {
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(p) = self.pwd_prompt.as_mut() {
-                    p.input.push(c);
-                }
-            }
-            KeyCode::Backspace => {
-                if let Some(p) = self.pwd_prompt.as_mut() {
-                    p.input.pop();
-                }
-            }
-            KeyCode::Esc => self.pwd_prompt = None,
-            KeyCode::Enter => {
-                let Some(p) = self.pwd_prompt.take() else {
-                    return;
-                };
-                // 浮层开着时方向键仍可能换选中项：确认后按打开时的服启动
-                if let Some(idx) = self
-                    .online
-                    .servers
-                    .iter()
-                    .position(|s| s.entity_id == p.server_id)
-                {
-                    self.online.selected = idx;
-                }
-                self.online.pending_pwd = Some(p.input.trim().to_string());
-                self.spawn_online_launch();
-            }
-            _ => {}
-        }
-    }
-
-    /// 联机页：一键启动（拉地址 → 起本地代理 → 启动实例直连 127.0.0.1:代理端口）
-    pub fn spawn_online_launch(&mut self) {
-        if self.online.launching {
-            return;
-        }
-        // 密码一次性消费：任何提前返回都不把它留到下一次启动
-        let pwd = self.online.pending_pwd.take().unwrap_or_default();
-        let Some(cred) = self.cred.clone() else {
-            self.online.status = "未登录，请先在 资源(M) 页登录".into();
-            return;
-        };
-        let Some(server) = self.online.servers.get(self.online.selected).cloned() else {
-            self.online.status = "无可启动的服务器".into();
-            return;
-        };
-        // 自己的服关着的时候地址接口拿不到东西，先提示开服，别让用户以为「进服坏了」
-        if self.online.feed == crate::api::netease::RentalFeed::Mine && server.status == 0 {
-            self.online.status = format!(
-                "{} 处于「已关闭」：先按 p 开服（开服要等几秒），再回车进入",
-                server.title()
-            );
-            return;
-        }
-        let Some(inst) = self.instances.get(self.selected_instance).cloned() else {
-            self.online.status = "无实例可选（先去 下载(D) 页安装）".into();
-            return;
-        };
-        self.online.launching = true;
-        self.online.status = format!("获取 {} 地址…", server.title());
-        // 租赁服一键启动的下载（依赖库/资源/代理前置）也进下载中心
-        let task_id = self.begin_task(format!("租赁服 · {}", server.title()));
-        self.online_task_id = Some(task_id);
-        let tx = self.tx.clone();
-        let mc_dir = self.mc_dir.clone();
-        let user_id = cred.user_id.clone();
-        let user_token = cred.user_token.clone();
-        let uid = cred.user_id.clone();
-        let server_id = server.entity_id.clone();
-        self.online.launch_server = Some(server_id.clone());
-        self.record_recent(
-            RecentKind::Rental,
-            &server.entity_id,
-            server.title(),
-            &server.mc_version,
-        );
-        let nick = self.user_name.clone();
-        tokio::spawn(async move {
-            let result = async {
-                // 角色（尽力而为）：租赁服玩家记录不存在时尝试创建。
-                // 创建可能被平台拒绝（权限/名额），失败只提示不阻断——进服认证由本地代理的
-                // Yggdrasil 完成，不依赖这条记录。
-                let _ = tx
-                    .send(TaskMsg::OnlineStage(format!("检查租赁服角色 {nick}…")))
-                    .await;
-                match crate::api::netease::rental_roles(&user_id, &user_token, &server_id).await {
-                    Ok(list) if !crate::api::netease::rental_has_character(&list, &nick) => {
-                        let _ = tx
-                            .send(TaskMsg::OnlineStage(format!("创建租赁服角色 {nick}…")))
-                            .await;
-                        if let Err(e) = crate::api::netease::create_rental_character(
-                            &user_id,
-                            &user_token,
-                            &server_id,
-                            &nick,
-                        )
-                        .await
-                        {
-                            let _ = tx
-                                .send(TaskMsg::OnlineStage(format!(
-                                    "角色创建未生效（{e}），继续启动"
-                                )))
-                                .await;
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        let _ = tx
-                            .send(TaskMsg::OnlineStage(format!(
-                                "角色查询失败（{e}），继续启动"
-                            )))
-                            .await;
-                    }
-                }
-                let addr =
-                    crate::api::netease::rental_address(&user_id, &user_token, &server_id, &pwd)
-                        .await?;
-                let (host, port) = addr
-                    .pick()
-                    .ok_or_else(|| anyhow::anyhow!("服务器地址为空"))?;
-                let cfg = std::sync::Arc::new(crate::netease::proxy::ProxyConfig {
-                    forward_host: host,
-                    forward_port: port,
-                    nick_name: nick,
-                    game_version: server.mc_version.trim_start_matches('v').to_string(),
-                    // 租赁服也用**服务器自己的 entity_id**：游戏侧所有关联
-                    // （角色 / 组件 / 进服认证）都按它取值，不是任何平台常量
-                    game_id: server_id.clone(),
-                    user: crate::api::netease::EntityUserInfo {
-                        token: user_token,
-                        user_id: uid,
-                    },
-                });
-                let local_port = crate::netease::proxy::start(0, cfg).await?;
-                crate::app::launch_instance_online(
-                    &mc_dir,
-                    &inst,
-                    &server.name,
-                    local_port,
-                    task_id,
-                    tx.clone(),
-                )
-                .await
-            }
-            .await;
-            let _ = tx.send(TaskMsg::OnlineDone(result)).await;
-        });
-    }
-
     /// 服务器页：加载 Java 国际服列表并 ping 状态（无需登录）
     pub fn spawn_load_servers(&mut self) {
         if self.server_loading {
@@ -3575,43 +2942,6 @@ impl App {
         }
     }
 
-    /// 主页大图：引用**最新的游戏 F2 截图**。
-    /// /// 优先级：
-    /// 1. `screenshots/` 里最新的那一张（用户自己按 F2 截的）
-    /// 2. 实例 `saves/<世界>/icon.png`（Minecraft 存的世界头像）
-    /// 3. 都没有 → 大图区显示 MCTL 立体 ASCII
-    /// /// 不看 mctl 的自动截图目录（`mctl/shots/`）：那是定期抓的，
-    /// 与"用户主动截的"是两回事。
-    pub fn hero_shot(&self) -> Option<PathBuf> {
-        self.latest_game_screenshot()
-            .or_else(|| self.current_world_icon())
-    }
-
-    /// `screenshots/` 下最新的一张（游戏内按 F2 产出，文件名 `2026-10-02_18时30分00秒.png`）
-    pub fn latest_game_screenshot(&self) -> Option<PathBuf> {
-        let dir = self.mc_dir.join("screenshots");
-        std::fs::read_dir(dir)
-            .ok()?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")))
-            .max_by_key(|p| {
-                std::fs::metadata(p)
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::UNIX_EPOCH)
-            })
-    }
-
-    /// 当前选中实例 + 选中世界里的 icon.png
-    fn current_world_icon(&self) -> Option<PathBuf> {
-        let inst = self.instances.get(self.selected_instance)?;
-        let saves = self.instance_saves_dir(inst);
-        let w = self.worlds.get(self.selected_world)?;
-        // 目录名，不是显示名——显示名和目录名可能不同（levelname.txt）
-        let icon = saves.join(&w.dir).join("icon.png");
-        icon.is_file().then_some(icon)
-    }
-
     /// 世界缩略图路径：Java = `icon.png`（游戏保存世界时自动生成）；
     /// 基岩 = `world_icon.jpeg`。都没有返回 None（界面画 ◻ 占位）。
     /// /// 只认游戏自己写的缩略图，不用 mctl 的自动截图 / F2 截图——
@@ -3750,9 +3080,7 @@ impl App {
         let item = storage::RecentItem::new(id, name, detail);
         let list = match kind {
             RecentKind::JavaServer => &mut self.recents.java_servers,
-            RecentKind::Rental => &mut self.recents.rentals,
             RecentKind::Download => &mut self.recents.downloads,
-            RecentKind::World => &mut self.recents.worlds,
         };
         storage::push_recent(list, item);
         if let Err(e) = storage::save_recents(&self.cfg_root, &self.recents) {
@@ -3939,12 +3267,6 @@ impl App {
                     self.srv_covers[index] = protocol;
                 }
             }
-            TaskMsg::RentalCoverLoaded { index, img } => {
-                let protocol = img.map(|i| self.picker.new_resize_protocol(i));
-                if index < self.rental_covers.len() {
-                    self.rental_covers[index] = protocol;
-                }
-            }
             TaskMsg::BeChecked { index, be } => {
                 self.be_queue.retain(|&i| i != index);
                 if let Some(b) = be {
@@ -4037,32 +3359,7 @@ impl App {
                 let _ = id;
             }
             TaskMsg::GameExit(code) => self.on_game_exit(code),
-            TaskMsg::OnlineListLoaded { feed, result } => self.on_online_list_loaded(feed, result),
-            TaskMsg::OnlineSearchLoaded { query, result } => {
-                self.on_online_search_loaded(query, result)
-            }
-            TaskMsg::RentalFavoriteDone {
-                server_id,
-                is_favorite,
-                message,
-            } => self.on_rental_favorite_done(&server_id, is_favorite, message),
-            TaskMsg::RentalPowerDone {
-                server_id,
-                status,
-                message,
-            } => self.on_rental_power_done(&server_id, status, message),
-            TaskMsg::RentalLikeDone {
-                server_id,
-                like,
-                message,
-            } => self.on_rental_like_done(&server_id, like, message),
-            TaskMsg::OnlineDone(result) => self.on_online_done(result),
-            TaskMsg::OnlineStage(stage) => self.online.status = stage,
             TaskMsg::ServerListLoaded(list) => self.on_server_list_loaded(list),
-            TaskMsg::ServerStage(stage) => {
-                self.server_status = stage.clone();
-                self.status = stage;
-            }
             TaskMsg::ServerDone(result) => self.on_server_done(result),
             TaskMsg::PluginInstallDone(result) => match result {
                 Ok(info) => {
@@ -4485,81 +3782,6 @@ impl App {
         }
         trim_shots(&self.shots_dir());
         self.spawn_banner_shot();
-    }
-
-    pub fn on_online_list_loaded(
-        &mut self,
-        feed: crate::api::netease::RentalFeed,
-        result: Result<Vec<crate::api::netease::EntityRentalGame>>,
-    ) {
-        // 切榜会立刻发起新请求，旧请求的响应回来时榜单已经变了：只认当前榜单的响应
-        if feed != self.online.feed {
-            return;
-        }
-        self.online.loading = false;
-        self.rental_covers.clear();
-        self.rental_cover_queue.clear();
-        match result {
-            Ok(list) => {
-                self.online.servers = list;
-                self.online.selected = 0;
-                self.online.scroll = 0;
-                self.rental_covers = (0..self.online.servers.len()).map(|_| None).collect();
-                self.online.status = format!(
-                    "{}：共 {} 个租赁服（回车一键启动）",
-                    self.online.feed.label(),
-                    self.online.servers.len()
-                );
-            }
-            Err(e) => {
-                let msg = format!("加载失败: {e}");
-                // 网关回 404 网页 = 该来源在当前部署环境没上（不是登录/网络问题），记下来
-                if msg.contains("当前环境不可用") && !self.online.dead_feeds.contains(&feed) {
-                    self.online.dead_feeds.push(feed);
-                }
-                self.online.servers.clear();
-                self.online.status = msg;
-            }
-        }
-    }
-
-    fn on_online_done(&mut self, result: Result<u32>) {
-        self.online.launching = false;
-        if let Some(id) = self.online_task_id.take() {
-            if let Some(t) = self.install_tasks.iter_mut().find(|t| t.id == id) {
-                match &result {
-                    Ok(_) => {
-                        t.status = InstallStatus::Done;
-                        t.phase = "启动链路就绪".into();
-                    }
-                    Err(e) => {
-                        t.status = InstallStatus::Failed;
-                        t.phase = format!("失败: {e}");
-                    }
-                }
-            }
-        }
-        match result {
-            Ok(pid) => {
-                self.game_pid = Some(pid);
-                self.online.status = format!("已进入服务器，游戏运行中 PID {pid}");
-                self.status = format!("联机启动成功 PID {pid}");
-            }
-            Err(e) => {
-                // 加密服密码错：地址接口回 code=65「密码错误」，给一条能马上照做的提示
-                let hint = if e.to_string().contains("密码错误") {
-                    // 列表没标 has_pwd 的服（如「我的租赁服」）也记住，下次回车先问密码
-                    if let Some(id) = self.online.launch_server.clone() {
-                        self.set_pwd_required(&id);
-                    }
-                    " · 回车重新输入密码"
-                } else {
-                    ""
-                };
-                self.online.status = format!("启动失败: {e}{hint}");
-                self.status = format!("联机启动失败: {e}");
-            }
-        }
     }
 
     fn on_server_list_loaded(&mut self, list: Vec<crate::api::mcserver::JavaServer>) {
@@ -5228,11 +4450,6 @@ impl App {
             self.handle_theme_picker_key(key);
             return;
         }
-        // 租赁服密码浮层：开着时独占按键，避免密码字符触发页面快捷键
-        if self.pwd_prompt.is_some() {
-            self.handle_pwd_prompt_key(key);
-            return;
-        }
         // LittleSkin 登录输入模式：短路其余按键处理，只走输入
         if self.ls.input && self.home_view != HomeView::Resource {
             self.handle_global_key(key);
@@ -5246,52 +4463,6 @@ impl App {
             return;
         }
         self.handle_global_key(key);
-    }
-
-    fn handle_online_key(&mut self, key: crossterm::event::KeyEvent) {
-        use crossterm::event::KeyCode;
-        // 首次进入自动加载
-        if self.online.servers.is_empty() && !self.online.loading && !self.online.launching {
-            self.spawn_load_online();
-        }
-        // 这里只处理「租赁服页独有」的键：
-        // - Enter = 连接选中服务器
-        // - [ / ] = 换榜（综合/最新/最热/好友/收藏/最近）
-        // - s     = 收藏 / 取消收藏选中服（先查状态再取反）
-        // - p     = 开服 / 关服（仅「我的租赁服」榜）
-        // - t     = 点赞 / 取消点赞
-        // - /     = 按编号（房号）搜索租赁服
-        // 方向键 / r **故意不在此处理**：全局处理器（`move_content_*` / `r` 分支）
-        // 已按卡片网格做整行跳转与边界收敛，若在此再动一次 `online.selected`，
-        // 一次按键会移动「1 + 一行」，表现为方向键乱跳（曾经的 bug）。
-        // 角色名/命令输入态下放行给全局：否则名字里的 s、[ 会被当成快捷键。
-        // 角色名/命令行/4399 登录/全屏登录这些「字符直入输入框」的状态下，
-        // 字母键要留给输入框（否则名字里的 s、[ 会被当成快捷键），
-        // 与 handle_global_key 的短路顺序保持一致。
-        if self.text_input_busy() {
-            return;
-        }
-        match key.code {
-            KeyCode::Enter if !self.online.launching => self.open_pwd_prompt(),
-            KeyCode::Char('[') => self.switch_rental_feed(-1),
-            KeyCode::Char(']') => self.switch_rental_feed(1),
-            KeyCode::Char('s') => self.toggle_rental_favorite(),
-            KeyCode::Char('p') => self.toggle_rental_power(),
-            KeyCode::Char('t') => self.toggle_rental_like(),
-            KeyCode::Char('/') => self.online.searching = true,
-            _ => {}
-        }
-    }
-
-    /// 是否处于「字符直入输入框」的界面态（角色名 / 命令行 / 4399 登录 / 全屏登录）。
-    /// 这些状态下页面专属的字母快捷键要让路，按键只进输入框。
-    pub fn text_input_busy(&self) -> bool {
-        self.role_input
-            || self.shell_input
-            || self.login_input
-            || self.login_screen.is_some()
-            || self.pwd_prompt.is_some()
-            || self.online.searching
     }
 
     /// Alt+1..4 直达主页视图（终端把 Alt 拆成 Esc+字符时由 main 循环调用）
@@ -6520,29 +5691,6 @@ fn pick_picker() -> ratatui_image::picker::Picker {
     picker.set_protocol_type(proto);
     picker
 }
-/// 一键启动联机服：核心流程与 launch_instance 相同，仅额外追加 --server/--port 指向本地代理
-async fn launch_instance_online(
-    mc_dir: &Path,
-    inst: &Instance,
-    nickname: &str,
-    local_port: u16,
-    task_id: u64,
-    tx: mpsc::Sender<TaskMsg>,
-) -> Result<u32> {
-    launch_instance_inner(
-        mc_dir,
-        mc_dir,
-        inst,
-        nickname,
-        None,
-        Some((local_port, "127.0.0.1")),
-        None,
-        Some(task_id),
-        tx,
-    )
-    .await
-}
-
 /// 启动管线：找 Java → 补库 → 补资产 → natives → 启动
 /// auth = Some((角色uuid, access_token)) 时走 LittleSkin 外置登录（authlib-injector）
 async fn launch_instance(
@@ -6718,426 +5866,6 @@ async fn launch_instance_inner(
     pid.ok_or_else(|| anyhow::anyhow!("无法获取游戏进程 PID"))
 }
 
-/// 网易客户端模式启动（实测）：
-/// 本地 AuthLib 认证服务 + -D 参数（launcherControlPort/launcherGameId/userId/Token/Server）
-/// + --server/--port 直连服务器（不走本地代理）。
-/// 认证带真实 mods 列表（Yggdrasil BuildHashData 会校验）；crc_salt 自动探测缓存。
-/// 前提：网易客户端已由 launcher::netease::install_client 装好（含 Linux natives）。
-async fn launch_netease(
-    mc_dir: &Path,
-    inst: &Instance,
-    _server_name: &str,
-    host: String,
-    port: u16,
-    game_id: String,
-    user: crate::api::netease::EntityUserInfo,
-    sead: Option<String>,
-    role_name: &str,
-    task_id: u64,
-    tx: mpsc::Sender<TaskMsg>,
-) -> Result<u32> {
-    macro_rules! stage {
-        ($($arg:tt)*) => {{
-            let tx = tx.clone();
-            let s = format!($($arg)*);
-            tokio::spawn(async move { let _ = tx.send(TaskMsg::ServerStage(s)).await; });
-        }};
-    }
-    // 下载出口：状态行走 ServerStage，阶段/单文件同时进下载中心（同一个进服任务）
-    let stage_cb = |phase: &str, done: usize, total: usize| {
-        report_stage(&tx, StageSink::Server, Some(task_id), phase, done, total);
-    };
-    let file_cb = |f: launcher::FileProgress| send_file_progress(&tx, task_id, f);
-    let nep = crate::launcher::netease::Progress {
-        stage: &stage_cb,
-        file: &file_cb,
-    };
-    // 0. X19.GameVersion 动态刷新（失败静默用缓存/常量）
-    let _ = crate::api::netease::refresh_x19_version().await;
-    // 0.5 会话激活 + 开局上报（对照 OpenSDK.NEL 时序：缺此步 Yggdrasil 0x11）
-    stage!("激活会话（login-start / game-start）…");
-    crate::api::netease::game_login_start(&user.user_id, &user.token)
-        .await
-        .map_err(|e| anyhow::anyhow!("login-start 失败: {e:#}"))?;
-    crate::api::netease::game_play_start(&user.user_id, &user.token, &game_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("game-start 失败: {e:#}"))?;
-    // 0.7 游戏组件 + 联机核心 mod：**必须在 mods_json 之前**做完。
-    // mods_json 就是 Yggdrasil 指纹里的 mods 列表，官方每个 (服务器, 角色) 一套 runtime，
-    // 这里保证：当前服务器的组件在位、别的服务器不残留、核心 mod 跟上服务端更新。
-    {
-        stage!("检查游戏组件…");
-        // 平台核心库：base/版本包自带的是旧网络层库，平台侧用 core lib 覆盖它们。
-        // 必须是启动前的最新状态，否则客户端网络层与核心 mod 代次不匹配（收到任何回复都崩）。
-        if let Err(e) = crate::launcher::netease::refresh_core_lib_if_stale(
-            mc_dir,
-            &inst.id,
-            &user.user_id,
-            &user.token,
-            nep,
-        )
-        .await
-        {
-            stage!("核心库刷新失败（{e:#}），继续启动");
-        }
-        // 官方在组件下载失败时只记警告、照常启动（InstallerService catch → Log.Warning）；
-        // 这里同样非致命，但不写 flag → 下次启动自动重试
-        if let Err(e) = crate::launcher::netease::ensure_server_components(
-            mc_dir,
-            &game_id,
-            &user.user_id,
-            &user.token,
-            nep,
-        )
-        .await
-        {
-            stage!("游戏组件准备失败（{e:#}），继续启动");
-        }
-        if let Err(e) = crate::launcher::netease::install_core_mods(
-            mc_dir,
-            &inst.id,
-            &user.user_id,
-            &user.token,
-            nep,
-        )
-        .await
-        {
-            stage!("核心 mod 刷新失败（{e:#}），继续启动");
-        }
-    }
-    // 1. 本地 AuthLib 认证服务（网易客户端进服时连接；mods 列表取自已安装的 mods 目录）
-    stage!("启动本地认证服务…");
-    let mods_json = crate::netease::mods_json(mc_dir);
-    let auth_port = crate::netease::authlib::start(
-        0,
-        user.clone(),
-        game_id.clone(),
-        inst.id.clone(),
-        mods_json,
-        sead,
-    )
-    .await?;
-    // 1.5 本地 RPC 服务（网易 mod NetworkSocket，端口进 --userProperties.launcherport；
-    // 与认证端口分开，两端口并存）
-    stage!("启动本地 RPC 服务…");
-    let rpc_port = {
-        // 客户端接入/请求进服这类关键节点直接进状态行 + 下载中心任务（进服是否被触发，用户看得见）
-        let tx = tx.clone();
-        let on_event = std::sync::Arc::new(move |s: &str| {
-            report_stage(&tx, StageSink::Server, Some(task_id), s, 0, 0);
-        });
-        crate::netease::rpc::start(0, host.clone(), port, role_name.to_string(), on_event).await?
-    };
-    // 2. Java（版本矩阵：<1.16→8；1.16–1.20.5→17；≥1.20.6→21；json majorVersion 取较大值兜底）
-    let required = launcher::java::required_major_for(&inst.id).max(inst.java_major);
-    stage!("查找 Java {required}+…");
-    let java = launcher::java::find_java(required)
-        .ok_or_else(|| anyhow::anyhow!("{}", launcher::java::missing_java_message(required)))?;
-    // 2.5 矩阵匹配：老版本不能跑新 Java（Forge 1.8.9/1.12.2 在 Java 9+ 会崩）
-    let actual = launcher::java::detect_major(&java).unwrap_or(required);
-    match launcher::java::check_java_fit(&inst.id, actual) {
-        launcher::java::JavaFit::Ok => {}
-        launcher::java::JavaFit::Warn(msg) => stage!("Java 提示：{msg}"),
-        launcher::java::JavaFit::Unsupported(msg) => {
-            return Err(anyhow::anyhow!("Java 不兼容：{msg}"));
-        }
-    }
-    let profile = launcher::load_profile(inst)?;
-    // 3. 补库（网易 base 已含；缺失的按 json downloads 下载）
-    stage!("检查依赖库…");
-    launcher::ensure_libraries(
-        mc_dir,
-        &profile,
-        |done, total| {
-            if done % 8 == 0 || done == total {
-                report_stage(
-                    &tx,
-                    StageSink::Server,
-                    Some(task_id),
-                    "补全依赖库",
-                    done,
-                    total,
-                );
-            }
-        },
-        &file_cb,
-    )
-    .await?;
-    // 4. 资产（网易 base 已含，缺失时补）
-    stage!("检查资源文件…");
-    launcher::ensure_assets(
-        mc_dir,
-        &profile,
-        |done, total| {
-            if done % 8 == 0 || done == total {
-                report_stage(
-                    &tx,
-                    StageSink::Server,
-                    Some(task_id),
-                    "补全资源文件",
-                    done,
-                    total,
-                );
-            }
-        },
-        &file_cb,
-    )
-    .await?;
-    // 4.5 natives 幂等解压（网易包自带 natives-linux.jar，无外网）
-    crate::launcher::netease::extract_packaged_natives(mc_dir, &inst.id)?;
-    // 4.6 quickPlay 进服记录：网易客户端读 quickPlay\java\1717576855170.json 自动进服，
-    // 缺失则停在主菜单（实测）。**每次启动都按目标服务器重写**：客户端会自己回写
-    // 「最近一次进过的服」，沿用旧内容会导致换服后自动连回上一次的地址。
-    {
-        let qp = mc_dir.join("quickPlay\\java\\1717576855170.json");
-        let qp_body = format!(
-            r#"[{{"type":"multiplayer","id":"{host}:{port}","name":"{role_name}","lastPlayedTime":"2026-01-01T00:00:00.000Z","gamemode":"survival"}}]"#
-        );
-        let same = std::fs::read_to_string(&qp)
-            .map(|old| old == qp_body)
-            .unwrap_or(false);
-        if !same {
-            if let Some(parent) = qp.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(&qp, qp_body);
-        }
-    }
-    // 5. 组装网易专属启动命令（jvm_arguments + parameter_arguments 严格照网易 json
-    // 与 ：forge 加载器参数、--launchTarget、--userPropertiesEx
-    // channel=netease 等——标准 arguments 缺这些会加载成国际版原版界面）
-    stage!("启动游戏…");
-    let role_uuid = crate::netease::crypto::role_uuid(role_name, &user.user_id);
-    let encrypt_token = crate::netease::crypto::generate_encrypt_token(&user.token)?;
-    let cmd = launcher::build_netease_command(
-        mc_dir,
-        &inst.id,
-        &java,
-        2048,
-        role_name,
-        &role_uuid,
-        &host,
-        port,
-        &user.user_id,
-        &encrypt_token,
-        &game_id,
-        auth_port,
-        rpc_port,
-        mc_dir,
-        &mc_dir.join("assets"),
-    )?;
-    // 5.5 启动前自检：7 条「正常匹配池」硬约束（`建议/02` P0-3）。
-    // 阻断级不满足 → 直接报错：宁可失败，也不要用离线参数骗进黑屋。
-    let checks = launcher::check_netease_command(&cmd);
-    let failed: Vec<&launcher::PreflightCheck> = checks.iter().filter(|c| !c.ok).collect();
-    let blocking: Vec<&launcher::PreflightCheck> =
-        failed.iter().copied().filter(|c| c.blocking).collect();
-    if !blocking.is_empty() {
-        let list = blocking
-            .iter()
-            .map(|c| format!("第{}条 {}：{}", c.no, c.name, c.detail))
-            .collect::<Vec<_>>()
-            .join("；");
-        return Err(anyhow::anyhow!(
-            "启动前自检未通过（进正常匹配池的硬约束）：{list}"
-        ));
-    }
-    for c in failed.iter().filter(|c| !c.blocking) {
-        stage!("自检提醒：第{}条 {}（{}）", c.no, c.name, c.detail);
-    }
-    let mut tcmd = tokio::process::Command::new(cmd.get_program());
-    tcmd.args(cmd.get_args());
-    // 复制 std Command 的完整环境（含 env_remove 的键——tokio envs 不接受 None，
-    // 必须逐项同步，否则 WAYLAND_DISPLAY 移除等设置不会传给游戏进程）
-    for (k, v) in cmd.get_envs() {
-        match v {
-            Some(val) => {
-                tcmd.env(k, val);
-            }
-            None => {
-                tcmd.env_remove(k);
-            }
-        }
-    }
-    tcmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = tcmd.spawn()?;
-    let pid = child.id();
-
-    // 转发日志到 UI
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    let tx_log = tx.clone();
-    tokio::spawn(async move {
-        if let Some(out) = child.stdout.take() {
-            let tx = tx_log.clone();
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(out).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = tx.send(TaskMsg::GameLog(line)).await;
-                }
-            });
-        }
-        if let Some(err) = child.stderr.take() {
-            let tx = tx_log.clone();
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(err).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = tx.send(TaskMsg::GameLog(line)).await;
-                }
-            });
-        }
-        let status = child.wait().await;
-        let code = match status {
-            Ok(s) => s.code(),
-            Err(_) => None,
-        };
-        let _ = tx.send(TaskMsg::GameExit(code)).await;
-    });
-
-    pid.ok_or_else(|| anyhow::anyhow!("无法获取游戏进程 PID"))
-}
-
-/// 联机大厅一键进服：服务器详情/地址 → 版本 → 角色 → 网易客户端 → 启动。
-/// 抽成模块级函数（TUI 只是 spawn 它）：实网 `#[ignore]` 测试能直接跑同一条链路。
-pub(crate) async fn launch_netease_server(
-    mc_dir: &Path,
-    item_id: &str,
-    user_id: &str,
-    user_token: &str,
-    sead: Option<String>,
-    role: &str,
-    task_id: u64,
-    tx: mpsc::Sender<TaskMsg>,
-) -> Result<u32> {
-    // 1. 服务器详情（名称 + 版本回退列表）
-    let detail = crate::api::netease::netgame_detail(user_id, user_token, item_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("获取服务器详情失败: {e:#}"))?;
-    // 2. 服务器地址
-    let addr = crate::api::netease::netgame_address(user_id, user_token, item_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("获取服务器地址失败: {e:#}"))?;
-    // 2.2 客户端版本：ping 服务器真实协议优先（平台 mc_version_list 可能过期，
-    // 某热门服实测：元数据 1.20 / 实服协议 774=1.21.8），ping 失败回退元数据
-    let mc_version = match crate::api::netease::server_protocol(&addr.ip, addr.port).await {
-        Ok(p) => {
-            let v = crate::api::netease::protocol_version(p).to_string();
-            let _ = tx
-                .send(TaskMsg::ServerStage(format!(
-                    "服务器协议 {p} → 网易客户端 {v}"
-                )))
-                .await;
-            v
-        }
-        Err(_) => detail
-            .mc_version_list
-            .iter()
-            // 回退时取列表里最高版本（平台列表首项常过期，如某热门服元数据 1.20 / 实服 1.21.8）
-            .max_by_key(|v| crate::launcher::netease::version_enum(v.name.trim_start_matches('v')))
-            .map(|v| v.name.trim_start_matches('v').to_string())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "服务器版本未知（ping 失败且 mc_version_list 为空）：{}",
-                    detail.name
-                )
-            })?,
-    };
-    let _ = tx
-        .send(TaskMsg::ServerStage(format!(
-            "{} · 客户端版本 {mc_version}",
-            detail.name
-        )))
-        .await;
-    // 2.5 联机角色：名字必须**已存在**（官方语义：启动时按名字查角色，查不到即「角色不存在」）。
-    // 列表里没有 → 自动创建所设登录名 → 重查确认（平台侧有写入延迟，最多重试 3 次）。
-    let _ = tx
-        .send(TaskMsg::ServerStage(format!("检查联机角色 {role}…")))
-        .await;
-    let mut chars = crate::api::netease::netgame_characters(item_id, user_id, user_token)
-        .await
-        .map_err(|e| anyhow::anyhow!("查询联机角色失败: {e:#}"))?;
-    if !crate::api::netease::netgame_has_character(&chars, role) {
-        let _ = tx
-            .send(TaskMsg::ServerStage(format!("创建联机角色 {role}…")))
-            .await;
-        crate::api::netease::create_character(item_id, user_id, user_token, role)
-            .await
-            .map_err(|e| anyhow::anyhow!("创建联机角色失败: {e:#}"))?;
-        let mut ok = false;
-        for _ in 0..3 {
-            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-            if let Ok(list) =
-                crate::api::netease::netgame_characters(item_id, user_id, user_token).await
-            {
-                chars = list;
-                if crate::api::netease::netgame_has_character(&chars, role) {
-                    ok = true;
-                    break;
-                }
-            }
-        }
-        if !ok {
-            let names: Vec<&str> = chars
-                .iter()
-                .map(|c| c.name.as_str())
-                .filter(|n| !n.is_empty())
-                .collect();
-            let hint = if names.is_empty() {
-                "角色列表仍为空（创建可能被平台拒绝）".to_string()
-            } else {
-                format!("账号现有角色：{}", names.join("、"))
-            };
-            return Err(anyhow::anyhow!(
-                "角色「{role}」不存在：{hint}；请把设置里的角色名改成其中之一，或先在官方客户端里建好"
-            ));
-        }
-    }
-    // 3. 网易客户端准备（实测）——客户端包上百 MB，进度要能进下载中心
-    let nroot = mc_dir.join("netease");
-    let stage_cb = |phase: &str, done: usize, total: usize| {
-        report_stage(&tx, StageSink::Server, Some(task_id), phase, done, total);
-    };
-    let file_cb = |f: launcher::FileProgress| send_file_progress(&tx, task_id, f);
-    let nep = crate::launcher::netease::Progress {
-        stage: &stage_cb,
-        file: &file_cb,
-    };
-    if !crate::launcher::netease::is_installed(&nroot, &mc_version) {
-        let _ = tx
-            .send(TaskMsg::ServerStage(format!(
-                "下载网易客户端 {mc_version}（服务器版本）…"
-            )))
-            .await;
-        crate::launcher::netease::install_client(&nroot, &mc_version, user_id, user_token, nep)
-            .await
-            .map_err(|e| anyhow::anyhow!("安装网易客户端失败: {e:#}"))?;
-    }
-    // 4. 网易模式启动：本地 AuthLib 认证服务 + -D 参数 + --server 直连（无代理）
-    let ninst = launcher::scan_instances(&nroot)
-        .into_iter()
-        .find(|i| i.id == mc_version)
-        .ok_or_else(|| anyhow::anyhow!("网易客户端安装后未找到版本 {mc_version}"))?;
-    crate::app::launch_netease(
-        &nroot,
-        &ninst,
-        &detail.name,
-        addr.ip,
-        addr.port,
-        item_id.to_string(),
-        crate::api::netease::EntityUserInfo {
-            token: user_token.to_string(),
-            user_id: user_id.to_string(),
-        },
-        sead,
-        &role,
-        task_id,
-        tx.clone(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("启动网易客户端失败: {e:#}")) // 进程退出结果由 GameExit 上报
-}
-
 // ---- tui-wm 外壳：渲染窗口内容 ----
 impl tui_wm_core::WmHost for App {
     fn render_window(&mut self, frame: &mut ratatui::Frame, id: u32, area: ratatui::layout::Rect) {
@@ -7166,89 +5894,6 @@ impl tui_wm_core::WmHost for App {
 #[cfg(test)]
 mod tests {
     use super::{storage, SettingField};
-
-    /// 实网：联机大厅一键进服全链路（真装客户端 + 真启动游戏进程，不 mock）。
-    /// 需 `MCTL_UID` / `MCTL_TOKEN`；`MCTL_SERVER=<名字子串>` 选服务器（缺省取列表第一个）。
-    /// `sead` 优先从 `~/.config/mctl/credentials.json` 读取；没有则回退历史候选。
-    /// ```text
-    /// MCTL_UID=… MCTL_TOKEN=… MCTL_SERVER=xx cargo test -- --ignored live_launch_netease_server --nocapture
-    /// ```
-    #[tokio::test]
-    #[ignore = "需要 MCTL_UID / MCTL_TOKEN 环境变量 + 实网 + 真启动游戏"]
-    async fn live_launch_netease_server() {
-        let (Ok(uid), Ok(tok)) = (std::env::var("MCTL_UID"), std::env::var("MCTL_TOKEN")) else {
-            eprintln!("跳过：未设置 MCTL_UID / MCTL_TOKEN");
-            return;
-        };
-        let cfg = crate::storage::config_dir();
-        // 登录响应里的 `sead` 是本次会话的 seed；不进环境变量、不进日志原值。
-        // 优先读凭据文件，保证实网测试和 TUI 的真实链路一致。
-        let sead = std::fs::read_to_string(cfg.join("credentials.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("sead").and_then(|x| x.as_str()).map(str::to_string));
-        eprintln!(
-            "登录 sead：{}",
-            if sead.is_some() {
-                "已加载（不打印原值）"
-            } else {
-                "缺失（回退历史候选）"
-            }
-        );
-        let st = crate::storage::load_settings(&cfg);
-        let mc_dir = st
-            .game_dir
-            .as_ref()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| cfg.join(".minecraft"));
-        let list = crate::api::netease::netgame_list(&uid, &tok, 0, 30)
-            .await
-            .expect("联机列表");
-        let want = std::env::var("MCTL_SERVER").unwrap_or_default();
-        let item = list
-            .iter()
-            .find(|s| want.is_empty() || s.name.contains(&want))
-            .expect("列表里找不到目标服务器");
-        eprintln!("目标服务器：{}（item={}）", item.name, item.entity_id);
-        let role = std::fs::read_to_string(cfg.join("role_name.txt"))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        let role = if role.is_empty() { uid.clone() } else { role };
-        let (tx, mut rx) = tokio::sync::mpsc::channel(512);
-        let printer = tokio::spawn(async move {
-            while let Some(m) = rx.recv().await {
-                match m {
-                    super::TaskMsg::ServerStage(s) => eprintln!("[stage] {s}"),
-                    super::TaskMsg::GameLog(l) => eprintln!("[game] {}", l.trim_end()),
-                    super::TaskMsg::GameExit(c) => eprintln!("[game-exit] {c:?}"),
-                    _ => {}
-                }
-            }
-        });
-        let res = super::launch_netease_server(
-            &mc_dir,
-            &item.entity_id,
-            &uid,
-            &tok,
-            sead,
-            &role,
-            0,
-            tx.clone(),
-        )
-        .await;
-        match &res {
-            Ok(pid) => eprintln!("启动返回 pid={pid}"),
-            Err(e) => eprintln!("启动失败: {e:#}"),
-        }
-        // 成功时再听一会儿游戏日志（进服认证/连接过程都在里面）。
-        // 必须用 timeout：游戏在跑时，它的 stdout/stderr 读取任务一直持有 tx 克隆，
-        // `printer.await` 会等到游戏退出才返回。
-        // 观察窗口要够长：客户端要到「Reloading CustomSky」之后才会向本地 RPC 请求进服，
-        // 再往后才是真正的连接/登录/进世界（实测从起服到渲染阶段就要 ~30s）
-        let wait = if res.is_ok() { 600 } else { 2 };
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(wait), printer).await;
-        assert!(res.is_ok(), "进服启动应成功（原因见上面的 [stage] 与错误）");
-    }
 
     /// 隐私：自动截图必须**默认关**。
     /// /// 自动截图 = 游戏运行时持续把画面存到本地（开场 1 分钟 3 张 + 之后每 30 分钟
@@ -8151,7 +6796,7 @@ mod tests {
     #[tokio::test]
     async fn report_stage_sends_status_line_and_task_title() {
         let (tx, mut rx) = mpsc::channel(16);
-        report_stage(&tx, StageSink::Server, Some(7), "下载网易客户端 base", 1, 3);
+        report_stage(&tx, StageSink::Launch, Some(7), "下载网易客户端 base", 1, 3);
         let (mut got_stage, mut got_task) = (false, false);
         for _ in 0..20 {
             while let Ok(m) = rx.try_recv() {
@@ -8167,7 +6812,7 @@ mod tests {
                         assert_eq!((done, total), (1, 3));
                         got_task = true;
                     }
-                    TaskMsg::ServerStage(s) => {
+                    TaskMsg::LaunchStage(s) => {
                         assert_eq!(s, "下载网易客户端 base 1/3");
                         got_stage = true;
                     }

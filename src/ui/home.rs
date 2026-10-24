@@ -373,34 +373,22 @@ pub(crate) fn status_panel(frame: &mut Frame, app: &App, area: Rect, focused: bo
     );
 }
 
-/// 服务器/租赁服视图的左下角状态栏：随选中服务器变化 + 客户端登录名称（角色名）可编辑
+/// 服务器视图的左下角状态栏：随选中服务器变化 + 客户端登录名称（角色名）可编辑
 fn server_mode_status(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     // 行1：选中服务器信息（随 ↑↓ 变化）
-    let server_line: Line = if app.home_view == HomeView::Server {
-        match app.servers.get(app.selected_server) {
-            Some(s) => Line::from(vec![
-                Span::styled("服务器 ", theme::dim()),
-                Span::styled(s.name.clone(), theme::base().bold()),
-                Span::raw("  "),
-                Span::styled(s.addr(), theme::dim()),
-                Span::raw("  "),
-                Span::styled(
-                    format!("v{} · {}", s.version, s.online_text()),
-                    theme::dim(),
-                ),
-            ]),
-            None => Line::from(Span::styled("服务器 （未加载，按 r 刷新）", theme::dim())),
-        }
-    } else {
-        match app.online.servers.get(app.online.selected) {
-            Some(s) => Line::from(vec![
-                Span::styled("租赁服 ", theme::dim()),
-                Span::styled(s.server_name.clone(), theme::base().bold()),
-                Span::raw("  "),
-                Span::styled(format!("{} 人", s.player_count), theme::dim()),
-            ]),
-            None => Line::from(Span::styled("租赁服 （未加载，按 r 刷新）", theme::dim())),
-        }
+    let server_line: Line = match app.servers.get(app.selected_server) {
+        Some(s) => Line::from(vec![
+            Span::styled("服务器 ", theme::dim()),
+            Span::styled(s.name.clone(), theme::base().bold()),
+            Span::raw("  "),
+            Span::styled(s.addr(), theme::dim()),
+            Span::raw("  "),
+            Span::styled(
+                format!("v{} · {}", s.version, s.online_text()),
+                theme::dim(),
+            ),
+        ]),
+        None => Line::from(Span::styled("服务器 （未加载，按 r 刷新）", theme::dim())),
     };
     // 行2：客户端登录名称（编辑态高亮输入框）
     let role_text: String = if app.role_name.trim().is_empty() {
@@ -647,7 +635,6 @@ fn server_cards(
     empty: &str,
     cards: &[(String, String)],
     selected: usize,
-    kind: CardKind,
 ) {
     let block = panel_block(title, focused);
     let inner = block.inner(area);
@@ -663,19 +650,9 @@ fn server_cards(
     let rows = (inner.height as usize / CARD_MIN_H).clamp(1, 3);
     app.server_grid_cols = cols; // ↑↓ 的步长（app.rs 按键时用）
     let page = cols * rows;
-    // 可视窗口起点：带滞回（见 grid_start）。服务器/租赁服各存各的，切页不互相带偏。
-    let start = match kind {
-        CardKind::Server => {
-            let s = grid_start(selected, page, cards.len(), app.srv_scroll);
-            app.srv_scroll = s;
-            s
-        }
-        CardKind::Rental => {
-            let s = grid_start(selected, page, cards.len(), app.online.scroll);
-            app.online.scroll = s;
-            s
-        }
-    };
+    // 可视窗口起点：带滞回（见 grid_start），选中项跟着滑动而不是整页跳。
+    let start = grid_start(selected, page, cards.len(), app.srv_scroll);
+    app.srv_scroll = start;
     let row_areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints((0..rows).map(|_| Constraint::Fill(1)).collect::<Vec<_>>())
@@ -690,16 +667,9 @@ fn server_cards(
             let Some(card) = cards.get(idx) else {
                 continue;
             };
-            server_card(frame, app, *cell, idx, idx == selected, card, kind);
+            server_card(frame, app, *cell, idx, idx == selected, card);
         }
     }
-}
-
-/// 卡片封面来源（联机服务器 / 租赁服各一套缓存）
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CardKind {
-    Server,
-    Rental,
 }
 
 /// 单张服务器卡片：封面 + 卡名 + 一行副标题（版本 · 人数）。
@@ -711,7 +681,6 @@ fn server_card(
     idx: usize,
     selected: bool,
     card: &(String, String),
-    kind: CardKind,
 ) {
     let (name, meta) = (&card.0, &card.1);
     let block = Block::default()
@@ -727,15 +696,8 @@ fn server_card(
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    // 封面：租赁服列表自带 URL；联机服务器要详情才有图（未就绪/已知无图分开处理）
-    let show_cover = match kind {
-        CardKind::Server => !app.srv_cover_none.get(idx).copied().unwrap_or(false),
-        CardKind::Rental => app
-            .online
-            .servers
-            .get(idx)
-            .is_some_and(|s| !s.image_url.is_empty()),
-    };
+    // 封面：Java 状态响应自带 favicon；解码失败/没图时退回纯文字
+    let show_cover = !app.srv_cover_none.get(idx).copied().unwrap_or(false);
     let mut text_area = inner;
     if show_cover {
         let [img_area, text] = Layout::default()
@@ -743,34 +705,14 @@ fn server_card(
             .constraints([Constraint::Percentage(55), Constraint::Fill(1)])
             .areas(inner);
         text_area = text;
-        // 惰性加载：没缓存且没在队列里 → 入队 + 拉取
-        let (cached, queued) = match kind {
-            CardKind::Server => (
-                app.srv_covers.get(idx).is_some_and(|c| c.is_some()),
-                app.srv_cover_queue.contains(&idx),
-            ),
-            CardKind::Rental => (
-                app.rental_covers.get(idx).is_some_and(|c| c.is_some()),
-                app.rental_cover_queue.contains(&idx),
-            ),
-        };
+        // 惰性加载：没缓存且没在队列里 → 入队 + 解码
+        let cached = app.srv_covers.get(idx).is_some_and(|c| c.is_some());
+        let queued = app.srv_cover_queue.contains(&idx);
         if !cached && !queued {
-            match kind {
-                CardKind::Server => {
-                    app.srv_cover_queue.push(idx);
-                    app.spawn_srv_cover(idx);
-                }
-                CardKind::Rental => {
-                    app.rental_cover_queue.push(idx);
-                    app.spawn_rental_cover(idx);
-                }
-            }
+            app.srv_cover_queue.push(idx);
+            app.spawn_srv_cover(idx);
         }
-        let proto = match kind {
-            CardKind::Server => app.srv_covers.get_mut(idx).and_then(|c| c.as_mut()),
-            CardKind::Rental => app.rental_covers.get_mut(idx).and_then(|c| c.as_mut()),
-        };
-        if let Some(protocol) = proto {
+        if let Some(protocol) = app.srv_covers.get_mut(idx).and_then(|c| c.as_mut()) {
             frame.render_stateful_widget(
                 ratatui_image::StatefulImage::<ratatui_image::protocol::StatefulProtocol>::new(),
                 img_area,
@@ -861,96 +803,6 @@ fn servers_panel(frame: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         empty,
         &cards,
         selected,
-        CardKind::Server,
-    );
-}
-
-fn rental_panel(frame: &mut Frame, app: &mut App, area: Rect, focused: bool) {
-    let searching = app.online.searching;
-    let active = app.online.search.clone();
-    let feed = if searching {
-        format!("搜索：{}▌", app.online.query)
-    } else if let Some(q) = &active {
-        format!("搜索「{q}」")
-    } else {
-        app.online.feed.label().to_string()
-    };
-    // 「我的租赁服」的开停是这页独有的操作，提示跟着榜单走（搜索态不适用）
-    let mine =
-        !searching && active.is_none() && app.online.feed == crate::api::netease::RentalFeed::Mine;
-    // 点赞接口在当前环境可能没上（实网 OBT 404）：试过一次后就别再提示按键
-    let like = if app.online.like_dead {
-        ""
-    } else {
-        " · t 点赞"
-    };
-    let keys = if searching {
-        "输入编号（房号）· Enter 搜索 · Esc 取消".to_string()
-    } else if mine {
-        format!("[ ] 换榜 · p 开/关服{like} · 回车连接")
-    } else if active.is_some() {
-        format!("[ ] 退出搜索 · s 收藏{like} · 回车连接")
-    } else {
-        format!("[ ] 换榜 · / 搜索 · s 收藏{like} · 回车连接")
-    };
-    // 输入态优先显示按键提示（状态栏的旧消息不能把「Enter 搜索」顶掉）
-    let title = if searching || app.online.status.is_empty() {
-        format!("◈ 租赁服 · {feed} · {keys}")
-    } else {
-        format!("◈ 租赁服 · {feed} · {}", app.online.status)
-    };
-    let empty = if app.online.loading {
-        "加载租赁服列表…"
-    } else if app.cred.is_none() {
-        "未登录网易账号 · 按 a 打开登录页"
-    } else if searching {
-        "输入租赁服编号（房号）后回车搜索"
-    } else if active.is_some() {
-        "（没有找到这个编号的租赁服 · [ ] 退出搜索）"
-    } else if app.online.dead_feeds.contains(&app.online.feed) {
-        "（当前环境没提供这个来源 · 按 [ ] 换榜）"
-    } else {
-        "（该榜单没有租赁服，[ ] 换榜或按 r 刷新）"
-    };
-    let cards: Vec<(String, String)> = app
-        .online
-        .servers
-        .iter()
-        .map(|s| {
-            // 我自己的服先报开停状态（公开榜单的 status 语义不同，不做展示）
-            let head = match (mine, s.power_label()) {
-                (true, Some(p)) => format!("{p} · "),
-                _ => String::new(),
-            };
-            // 点赞数是逛服时的参考（0 不显示，别把卡片塞满）
-            let likes = if s.like_num > 0 {
-                format!(" · ♡{}", s.like_num)
-            } else {
-                String::new()
-            };
-            (
-                s.title().to_string(),
-                format!(
-                    "{head}v{} · {}/{} 人{}{likes}",
-                    s.mc_version,
-                    s.player_count,
-                    s.capacity,
-                    if s.has_pwd == "1" { " · 🔒" } else { "" }
-                ),
-            )
-        })
-        .collect();
-    let selected = app.online.selected;
-    server_cards(
-        frame,
-        app,
-        area,
-        focused,
-        &title,
-        empty,
-        &cards,
-        selected,
-        CardKind::Rental,
     );
 }
 
@@ -1455,125 +1307,4 @@ pub fn draw_login_full(frame: &mut Frame, app: &mut App, area: Rect) {
             );
         }
     }
-}
-
-// ---------- 主界面概览：四张独立方框卡片 ----------
-
-/// 概览卡片（一个带边框的方框）
-/// 主界面只是**概览入口**：每张卡显示摘要，回车跳到对应主界面并选中该项，
-/// 各主界面本身一行不改。
-fn overview_card(
-    frame: &mut Frame,
-    title: &str,
-    area: Rect,
-    focused: bool,
-    rows: Vec<Vec<Span<'static>>>,
-    empty_hint: &str,
-) {
-    let block = panel_block(title, focused);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.height == 0 || inner.width == 0 {
-        return;
-    }
-    let items: Vec<ListItem> = if rows.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            empty_hint.to_string(),
-            theme::dim(),
-        )))]
-    } else {
-        rows.into_iter()
-            .map(|spans| ListItem::new(Line::from(spans)))
-            .collect()
-    };
-    let list = List::new(items).block(Block::default());
-    frame.render_widget(list, inner);
-}
-
-/// 主界面概览：最近世界 / 最近服务器 / 最近下载
-/// 布局：上排两张、下排下载通栏。
-pub fn draw_overview(frame: &mut Frame, app: &mut App, area: Rect) {
-    let rows = Layout::vertical([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)]).split(area);
-    let top = Layout::horizontal([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)]).split(rows[0]);
-
-    overview_card(
-        frame,
-        "▣ 最近世界",
-        top[0],
-        app.home_focus == HomeFocus::List,
-        recent_world_rows(app),
-        "（还没有游玩记录）",
-    );
-    overview_card(
-        frame,
-        "◈ 最近服务器",
-        top[1],
-        false,
-        recent_rows(&app.recents.java_servers, "（还没有进过服务器）"),
-        "（还没有进过服务器）",
-    );
-    overview_card(
-        frame,
-        "⇩ 最近下载",
-        rows[1],
-        app.home_focus == HomeFocus::Downloads,
-        recent_rows(&app.recents.downloads, "（还没有下载记录）"),
-        "（还没有下载记录）",
-    );
-}
-
-/// 最近世界行：`世界名 实例名`（按实例分，id = "<实例>/<世界>"）
-fn recent_world_rows(app: &App) -> Vec<Vec<Span<'static>>> {
-    app.recents
-        .worlds
-        .iter()
-        .take(6)
-        .map(|r| {
-            // id 形如 "1.21.1-fabric-0.19.3/Huraxdax" → 拆出实例名
-            let inst = r.id.split('/').next().unwrap_or("").to_string();
-            vec![
-                Span::styled(" ▣ ", theme::dim()),
-                Span::raw(truncate_to(&r.name, 22)),
-                Span::raw("  "),
-                Span::styled(inst, theme::dim()),
-            ]
-        })
-        .collect()
-}
-
-/// 通用最近记录行
-fn recent_rows(list: &[crate::storage::RecentItem], _hint: &str) -> Vec<Vec<Span<'static>>> {
-    list.iter()
-        .take(6)
-        .map(|r| {
-            let mut spans = vec![
-                Span::styled(" ▸ ", theme::dim()),
-                Span::raw(truncate_to(&r.name, 20)),
-            ];
-            if !r.detail.is_empty() {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(truncate_to(&r.detail, 12), theme::dim()));
-            }
-            spans
-        })
-        .collect()
-}
-
-/// 按显示列宽截断（中文按 2 列算）
-fn truncate_to(s: &str, max: usize) -> String {
-    if crate::ui::cell_width_of(s) <= max {
-        return s.to_string();
-    }
-    let mut out = String::new();
-    let mut w = 0;
-    for c in s.chars() {
-        let cw = crate::ui::cell_width_of(&c.to_string());
-        if w + cw > max.saturating_sub(1) {
-            break;
-        }
-        out.push(c);
-        w += cw;
-    }
-    out.push('…');
-    out
 }

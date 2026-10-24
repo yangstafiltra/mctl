@@ -3,7 +3,6 @@ pub mod home;
 pub mod maps;
 #[cfg(test)]
 mod mod_test;
-pub mod pwd_prompt;
 pub mod theme_picker;
 pub mod topbar;
 pub mod version_tree;
@@ -98,11 +97,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.theme_picker.is_some() {
         let area = frame.area();
         theme_picker::draw(frame, app, area);
-    }
-    // 密码浮层最后画：它只会在租赁服页出现，但同样要盖住整屏
-    if app.pwd_prompt.is_some() {
-        let area = frame.area();
-        pwd_prompt::draw(frame, app, area);
     }
 }
 

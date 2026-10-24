@@ -103,63 +103,6 @@ pub fn missing_java_message(required: u32) -> String {
     s
 }
 
-/// 网易客户端各版本的官方 Java 矩阵（社区/官方一致）：
-/// `<1.16 → 8`；`1.16–1.20.5 → 17`；`≥1.20.6 → 21`。
-/// 输入是网易版本目录名（如 `1.8.9` / `1.12.2` / `1.16` / `1.20` / `1.21.8`）。
-pub fn required_major_for(version: &str) -> u32 {
-    let mut it = version.split('.');
-    let a: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let b: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let c: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    if a == 1 && b < 16 {
-        8
-    } else if a == 1 && (b > 20 || (b == 20 && c >= 6)) {
-        21
-    } else if a > 1 {
-        21
-    } else {
-        17
-    }
-}
-
-/// 所选 Java 与版本的匹配结论（中文、可行动）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum JavaFit {
-    Ok,
-    /// 能启动，但有兼容风险（提示，不阻断）
-    Warn(String),
-    /// 官方矩阵不支持（阻断）：旧版 Forge 在 Java 9+ 上会崩、新版客户端 JVM 太旧会报 class file 版本错误
-    Unsupported(String),
-}
-
-/// 按矩阵检查「版本 → Java」。老版本**不能**跑新 Java（Forge 1.8.9/1.12.2 在 Java 9+ 会崩），
-/// 所以这里不是简单的 `>=`。
-pub fn check_java_fit(version: &str, actual: u32) -> JavaFit {
-    let req = required_major_for(version);
-    if actual < req {
-        return JavaFit::Unsupported(format!(
-            "{} 客户端需要 Java {}，当前 Java {} 太旧；升级后重试",
-            version, req, actual
-        ));
-    }
-    if req == 8 && actual > 8 {
-        let hint = install_hint(detect_pkg_manager(), 8)
-            .map(|c| format!("安装：{c}"))
-            .unwrap_or_else(|| "请安装 OpenJDK/JRE 8".to_string());
-        return JavaFit::Unsupported(format!(
-            "{} 客户端需要 Java 8，当前 Java {} 过新（老版 Forge 在 Java 9+ 会崩）。{}",
-            version, actual, hint
-        ));
-    }
-    if req == 17 && actual > 17 {
-        return JavaFit::Warn(format!(
-            "{} 客户端官方矩阵是 Java 17，当前 Java {} 较新：能启动，若 mod/原生库报错请换 Java 17",
-            version, actual
-        ));
-    }
-    JavaFit::Ok
-}
-
 /// 系统上是否存在任意 java（用于区分「没装」和「版本不够」）
 fn find_any_java() -> Option<PathBuf> {
     which_java().or_else(|| {
@@ -256,72 +199,7 @@ fn parse_major(text: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        check_java_fit, install_hint, missing_java_message, parse_major, required_major_for,
-        JavaFit,
-    };
-
-    /// 官方矩阵：<1.16→8；1.16–1.20.5→17；≥1.20.6→21
-    #[test]
-    fn required_java_matrix() {
-        for (v, want) in [
-            ("1.7.10", 8),
-            ("1.8.9", 8),
-            ("1.12.2", 8),
-            ("1.15.2", 8),
-            ("1.16", 17),
-            ("1.18", 17),
-            ("1.20", 17),
-            ("1.20.5", 17),
-            ("1.20.6", 21),
-            ("1.20.7", 21),
-            ("1.21", 21),
-            ("1.21.8", 21),
-        ] {
-            assert_eq!(required_major_for(v), want, "矩阵不符: {v}");
-        }
-    }
-
-    /// 老版本不能跑新 Java（Forge 1.8.9/1.12.2 在 Java 9+ 会崩）→ 必须阻断 + 给安装命令
-    #[test]
-    fn old_versions_must_not_run_new_java() {
-        match check_java_fit("1.12.2", 21) {
-            JavaFit::Unsupported(msg) => {
-                assert!(msg.contains("Java 8"), "提示缺目标版本: {msg}");
-                assert!(
-                    msg.contains("sudo ") || msg.contains("OpenJDK"),
-                    "提示不可行动: {msg}"
-                );
-            }
-            other => panic!("1.12.2 + Java 21 应被阻断: {other:?}"),
-        }
-        assert!(matches!(
-            check_java_fit("1.8.9", 17),
-            JavaFit::Unsupported(_)
-        ));
-        assert_eq!(check_java_fit("1.8.9", 8), JavaFit::Ok);
-    }
-
-    /// 新版本需要 21；Java 17 太旧 → 阻断
-    #[test]
-    fn new_versions_need_21() {
-        assert!(matches!(
-            check_java_fit("1.21.8", 17),
-            JavaFit::Unsupported(_)
-        ));
-        assert_eq!(check_java_fit("1.21.8", 21), JavaFit::Ok);
-        assert_eq!(check_java_fit("1.20.6", 21), JavaFit::Ok);
-    }
-
-    /// 1.16–1.20.5 用 21 能跑但有风险 → 只提示
-    #[test]
-    fn middle_versions_warn_on_too_new() {
-        match check_java_fit("1.20", 21) {
-            JavaFit::Warn(msg) => assert!(msg.contains("Java 17"), "提示缺目标版本: {msg}"),
-            other => panic!("1.20 + Java 21 应为告警: {other:?}"),
-        }
-        assert_eq!(check_java_fit("1.20", 17), JavaFit::Ok);
-    }
+    use super::{install_hint, missing_java_message, parse_major};
 
     #[test]
     fn modern_java_major_from_first_segment() {

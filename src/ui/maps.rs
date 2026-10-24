@@ -886,7 +886,8 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(dline), dl_inner);
 }
 
-/// 人类可读字节数
+/// 人类可读字节数（仅测试覆盖）
+#[cfg(test)]
 fn human_bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = n as f64;
