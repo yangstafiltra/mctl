@@ -65,9 +65,11 @@ pub fn draw_view(frame: &mut Frame, app: &mut App, view: HomeView, area: Rect) {
                 "当前实例 · ↑↓ 选世界 · 回车直进",
                 app.home_focus == HomeFocus::Banner,
             );
-            // 整块给世界列表——下一步要给每行加 icon.png 缩略图，
-            // 宽度得够（4/5 太窄，缩略图会把名字挤没）。
-            super::world_select::render(frame, app, rows[1], app.home_focus == HomeFocus::List);
+            let cols = Layout::horizontal([Constraint::Ratio(4, 5), Constraint::Ratio(1, 5)])
+                .split(rows[1]);
+            // 世界列表是主体；右侧保留下载活动，和下载中心共享同一份任务队列。
+            super::world_select::render(frame, app, cols[0], app.home_focus == HomeFocus::List);
+            downloads_panel(frame, app, cols[1], app.home_focus == HomeFocus::Downloads);
         }
         HomeView::Resource | HomeView::Download | HomeView::Plugins | HomeView::Settings => {}
     }
