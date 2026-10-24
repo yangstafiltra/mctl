@@ -1,6 +1,6 @@
 <img width="1269" height="384" alt="08006dd1e355f53be3b15dacec4fba7e" src="https://github.com/user-attachments/assets/f794ea45-7d2a-4c41-9040-908b30b54df5" />
 
-# mctl
+# mctl (测试版 有很多功能没有实现）
 
 一个跑在终端里的 Minecraft 工具：本地实例管理、Java 国际服列表与进服、
 资源下载、插件系统，以及一套可脚本化的层级 CLI。
