@@ -1,0 +1,17 @@
+/target
+/logs
+/hs_err_*.log
+# 真实 user_token 向量（含网易账号凭据，绝不入库；格式见 token_vectors.example.json）
+/token_vectors.json
+# 本地实验/临时文件
+建议/
+scratch/
+*.tmp
+
+# 客户端运行时目录（游戏按 cwd 生成；若在仓库根目录出现，不入库）
+/config/
+/heypixel/
+
+# Nix 构建产物（nix-build 的 result 符号链接等）
+/result
+/result-*

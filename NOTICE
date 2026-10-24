@@ -1,0 +1,9 @@
+mctl
+Copyright 2026 yangsta
+
+This product is licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+Third-party dependencies keep their own licenses (see Cargo.lock and each
+crate's metadata). This repository does not bundle any third-party
+launcher binary, game asset, or decompiled code.

@@ -1,0 +1,14 @@
+[package]
+name = "tui-wm-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "mctl TUI 窗口管理器核心：可停靠窗口、鼠标/键盘调整大小、左侧「视图」栏"
+
+[dependencies]
+ratatui = { version = "0.30", features = ["crossterm_0_28"] }
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[workspace]

@@ -1,0 +1,51 @@
+[package]
+name = "mctl"
+version = "0.1.0"
+edition = "2021"
+authors = ["yangsta"]
+license = "Apache-2.0"
+# 许可证全文见 LICENSE，归属声明见 NOTICE（Apache-2.0 §4d）
+
+[dependencies]
+regex = "1"
+anyhow = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+aes = "0.8"
+rand = "0.9"
+base64 = "0.22"
+url = "2"
+chacha20 = "0.9"
+rsa = { version = "0.9", features = ["sha2", "hazmat"] }
+crc32fast = "1"
+num-bigint = "0.4"
+# 密码不回显。顺带让密码不必走命令行参数 → 不进 shell history
+rpassword = "7"
+# 只用于把 SIGPIPE 恢复成默认：`mctl tree | head` 这类管道要安静退出，
+# 而不是在 println! 上 panic
+libc = "0.2"
+
+reqwest = { version = "0.12", features = ["json", "cookies", "stream", "gzip"] }
+futures-util = "=0.3.33"
+zip = "2"
+
+ratatui = { version = "0.30", features = ["crossterm_0_28"] }
+crossterm = "0.28"
+ratatui-image = { version = "11", default-features = false, features = ["image-defaults", "crossterm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# 主题引擎：39 个内置主题（catppuccin/dracula/tokyo-night/nord…）+ 语义色 token
+opaline = { version = "0.4", default-features = false, features = ["builtin-themes"] }
+# 这两个核心库原先在仓库外的 [mctl]plugin/ 里，靠 ../ 相对路径引用。
+# 为了让仓库自包含、能直接 clone 构建（以及后续 AUR 打包），
+# 已把源码 vendored 到 third_party/；上游仍是独立工程，见 third_party/README.md。
+tui-wm-core = { path = "third_party/tui-wm-core" }
+bedrock-launcher-core = { path = "third_party/bedrock-launcher-core" }
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

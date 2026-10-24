@@ -1,0 +1,30 @@
+[package]
+name = "bedrock-launcher-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Bedrock MSIXVC 解密 + ProtonGDK/umu 启动核心库"
+
+[dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "cookies", "stream", "gzip", "rustls-tls"] }
+aes = "0.9"
+cipher = "0.5"
+crypto-common = "0.2"
+ctr = "0.9"
+xts-mode = "0.6"
+sha2 = "0.10"
+md-5 = "0.10"
+futures-util = "0.3"
+hex = "0.4"
+bzip2 = "0.4"
+flate2 = "1"
+zip = "0.6"
+tempfile = "3"
+dirs = "5"
+tracing = "0.1"
+
+[workspace]

@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/item/query/available",
+    "body": "{\"channel_id\":11}",
+    "uid": "<你的 user_id>",
+    "token": "<你的 user_token>",
+    "expect": "<真实实现算出的 user-token 头值>",
+    "source": "Python 原型"
+  },
+  {
+    "path": "/rental-server/query/available-public-server",
+    "body": "{\"offset\":0}",
+    "uid": "<你的 user_id>",
+    "token": "<你的 user_token>",
+    "expect": "<真实实现算出的 user-token 头值>",
+    "source": "C# 真实实现"
+  }
+]
