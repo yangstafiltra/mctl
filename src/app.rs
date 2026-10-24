@@ -80,12 +80,6 @@ pub enum TaskMsg {
     AvatarLoaded(Option<StatefulProtocol>),
     /// 游戏输出日志行
     GameLog(String),
-    /// 插件版本列表加载完成（provides/versions 契约）
-    VersionsLoaded(Result<Vec<VersionItem>>),
-    /// 插件版本操作进度/状态
-    VersionsStatus(String),
-    /// 插件版本操作完成（动作, 版本id, 结果）
-    VersionsDone((String, String, Result<String>)),
     /// 游戏进程退出（退出码，None=信号终止）
     GameExit(Option<i32>),
     /// 官方版本清单加载完成
@@ -95,17 +89,6 @@ pub enum TaskMsg {
     ModpacksLoaded {
         result: Result<Vec<launcher::modpack::ModpackHit>>,
         offset: usize,
-    },
-    /// GitHub 搜索结果到达（配额稀缺，只在用户按 Enter 时发）
-    GhLoaded {
-        result: Result<api::github::SearchResult>,
-        /// 首屏加载（允许在注册表为空时回退到宽泛搜索）
-        initial: bool,
-    },
-    /// GitHub 仓库安装完成（clone + cargo build + 识别）
-    GhInstalled {
-        name: String,
-        result: Result<crate::plugin::PluginInfo>,
     },
     /// 安装阶段进度（`id` = InstallTask::id）
     InstallStage {
@@ -343,10 +326,6 @@ pub enum ResourceSource {
     NetEase,
     Mojang,
     Modrinth,
-    /// 插件提供的资源（provides/versions 契约，如基岩版）
-    Plugins,
-    Github,
-    Local,
 }
 
 /// Modrinth 分类（显示名, project_type）
@@ -359,22 +338,16 @@ pub const MODRINTH_CATEGORIES: [(&str, &str); 5] = [
 ];
 
 impl ResourceSource {
-    pub const ALL: [ResourceSource; 6] = [
+    pub const ALL: [ResourceSource; 3] = [
         ResourceSource::NetEase,
         ResourceSource::Mojang,
         ResourceSource::Modrinth,
-        ResourceSource::Plugins,
-        ResourceSource::Github,
-        ResourceSource::Local,
     ];
     pub fn label(self) -> &'static str {
         match self {
             ResourceSource::NetEase => "NetEase",
             ResourceSource::Mojang => "Mojang",
             ResourceSource::Modrinth => "Modrinth",
-            ResourceSource::Plugins => "插件",
-            ResourceSource::Github => "GitHub",
-            ResourceSource::Local => "Local",
         }
     }
 }
@@ -621,17 +594,6 @@ impl Default for LsPage {
             login: None,
         }
     }
-}
-
-/// 插件版本项（provides/versions 契约的 JSON 行）
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct VersionItem {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub installed: bool,
-    #[serde(default)]
-    pub size_mb: u64,
 }
 
 /// 「最近」的四类记录，和 `storage::Recents` 的四个字段一一对应。
@@ -952,7 +914,7 @@ pub struct ThemePicker {
     pub saved: String,
 }
 
-/// 服务器页的三个标签（浏览器式，Ctrl+1/2 直达）。
+/// 服务器页的两个标签（浏览器式，数字键 1/2 直达）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServerTab {
     /// 推荐 + mctl 自定义 + 当前实例用户服务器
@@ -960,37 +922,30 @@ pub enum ServerTab {
     All,
     /// 当前实例 `servers.dat` 里的服务器（与 Java 双向同步）
     User,
-    /// 内置精选推荐
-    Recommended,
 }
 
 impl ServerTab {
-    pub const ALL: [ServerTab; 3] =
-        [ServerTab::User, ServerTab::Recommended, ServerTab::All];
+    pub const ALL: [ServerTab; 2] = [ServerTab::User, ServerTab::All];
 
     pub fn label(self) -> &'static str {
         match self {
             ServerTab::All => "Java 国际服",
             ServerTab::User => "用户服务器",
-            ServerTab::Recommended => "推荐服务器",
         }
     }
 
-    /// 标签序号。终端普遍吞掉 Ctrl+数字，所以提示裸数字 1/2/3；
-    /// 支持 Ctrl 数字的终端仍然保留 Ctrl 快捷键。
+    /// 标签序号（裸数字 1/2；终端普遍收不到 Ctrl+数字）。
     pub fn hint(self) -> &'static str {
         match self {
             ServerTab::User => "1",
-            ServerTab::Recommended => "2",
-            ServerTab::All => "3",
+            ServerTab::All => "2",
         }
     }
 
     pub fn index(self) -> usize {
         match self {
             ServerTab::User => 0,
-            ServerTab::Recommended => 1,
-            ServerTab::All => 2,
+            ServerTab::All => 1,
         }
     }
 }
@@ -1024,7 +979,7 @@ pub struct App {
     pub server_launching: bool,
     /// 服务器页当前标签 + 每个标签各自记住的选中项
     pub server_tab: ServerTab,
-    pub server_tab_sel: [usize; 3],
+    pub server_tab_sel: [usize; 2],
     /// 当前实例 `servers.dat` 的条目（与 Java 客户端共用）
     pub user_servers: Vec<crate::api::mcserver::JavaServer>,
     pub user_servers_loading: bool,
@@ -1175,12 +1130,6 @@ pub struct App {
     /// 账户面板头像（~/.local/share/mctl/avatar.png；LittleSkin 登录后自动从皮肤裁剪）
     pub avatar: Option<StatefulProtocol>,
     /// 全屏登录界面（Some=显示）
-    /// 插件资源页（provides/versions 契约，核心只做通用渲染）
-    pub plugin_bin: Option<PathBuf>,
-    pub plugin_items: Vec<VersionItem>,
-    pub plugin_selected: usize,
-    pub plugin_status: String,
-    pub plugin_busy: bool,
     pub login_screen: Option<LoginScreen>,
     /// 自动截图循环任务（游戏运行时：开场 1 分钟 3 张 + 每 30 分钟一张；退出时中止）
     pub shot_task: Option<tokio::task::JoinHandle<()>>,
@@ -1216,21 +1165,6 @@ pub struct App {
     /// 进入设置页时的快照，用于「放弃」
     pub set_snapshot: Option<storage::Settings>,
 
-    // ---- GitHub 插件发现（api::github） ----
-    /// 原始搜索结果（缓存，配额稀缺所以不重复请求）
-    pub gh_results: Vec<crate::api::github::Repo>,
-    /// 本地过滤后的下标（细化搜索不花配额）
-    pub gh_filtered: Vec<usize>,
-    pub gh_selected: usize,
-    /// 请求在途
-    pub gh_searching: bool,
-    /// 已加载过（进页面不重复请求）
-    pub gh_loaded: bool,
-    /// 搜索配额剩余提示（未认证 10 次/分钟）
-    pub gh_rate: String,
-    pub gh_total: u64,
-    /// 搜索输入态（/ 进入，Enter 才发请求）
-    pub gh_search_input: bool,
 }
 
 impl App {
@@ -1277,7 +1211,7 @@ impl App {
             server_status: String::new(),
             server_launching: false,
             server_tab: ServerTab::All,
-            server_tab_sel: [0; 3],
+            server_tab_sel: [0; 2],
             user_servers: Vec::new(),
             user_servers_loading: false,
             user_servers_error: None,
@@ -1378,11 +1312,6 @@ impl App {
             ls: LsPage::default(),
             banner_shot: None,
             avatar: None,
-            plugin_bin: None,
-            plugin_items: Vec::new(),
-            plugin_selected: 0,
-            plugin_status: String::new(),
-            plugin_busy: false,
             login_screen: None,
             shot_task: None,
             shell_input: false,
@@ -1398,14 +1327,6 @@ impl App {
             set_msg: String::new(),
             set_snapshot: None,
 
-            gh_results: Vec::new(),
-            gh_filtered: Vec::new(),
-            gh_selected: 0,
-            gh_searching: false,
-            gh_loaded: false,
-            gh_rate: String::new(),
-            gh_total: 0,
-            gh_search_input: false,
         };
         // settings.json 覆盖默认路径/网格（必须在 scan_instances 之前）
         let st = storage::load_settings(&app.cfg_root);
@@ -1567,6 +1488,10 @@ impl App {
     pub fn handle_mouse(&mut self, ev: crossterm::event::MouseEvent) {
         use crossterm::event::{MouseButton, MouseEventKind};
         use ratatui::layout::Rect;
+        // 输入浮层开着时忽略鼠标，避免点一下背景就切走视图/标签。
+        if self.server_add.is_some() {
+            return;
+        }
         // 事件循环不持有最新 area，用最近一次终端尺寸近似
         let area = Rect::new(0, 1, self.term_size.0, self.term_size.1.saturating_sub(2));
         // 服务器标签页：点击直接切换（只在自己画过标签时生效）
@@ -2446,8 +2371,7 @@ impl App {
                 self.status = "命令: enter <世界> · plugin … · bedrock [pre] · refresh · quit · help · 快捷键: 实例面板聚焦按 o 存档 / f 全屏".into();
             }
             "bedrock" => {
-                self.source = ResourceSource::Plugins;
-                self.enter_source();
+                self.status = "基岩版安装请用 `mctl bedrock`（TUI 插件版本入口已移除）".into();
             }
             "quit" | "exit" | "退出" => self.quit = true,
             _ => self.status = format!("未知命令 {cmd}，输入 help 查看帮助"),
@@ -2625,105 +2549,6 @@ impl App {
         }
         let cols = self.grid_cols.max(1);
         self.dl.sel_result + 2 * cols >= self.dl.results.len()
-    }
-
-    // ─────────── GitHub 插件发现 ───────────
-
-    /// 搜索 GitHub 仓库。
-    /// /// ponytail: 只在用户**主动触发**时请求（进页面加载一次 / 按 Enter 搜索），
-    /// 绝不在按键时实时搜——未认证 search API 只有 10 次/分钟，实时搜必爆配额。
-    /// 结果缓存进 `gh_results`，后续细化走 `refilter_github`（零请求）。
-    pub fn spawn_search_github(&mut self) {
-        if self.gh_searching {
-            return;
-        }
-        self.spawn_search_github_as(false);
-    }
-
-    fn spawn_search_github_as(&mut self, initial: bool) {
-        self.gh_searching = true;
-        let q = self.dl.query.trim().to_string();
-        self.dl.install_status = if q.is_empty() {
-            format!("拉取 topic:{} 注册表…", api::github::PLUGIN_TOPIC)
-        } else {
-            format!("搜索 GitHub “{q}”…")
-        };
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            let mut result = api::github::search_repos(&q, 1).await;
-            // 注册表还没人用（topic 无人认领）时，空查询会返回 0 条 → 首屏死掉。
-            // 回退到宽泛搜索，并说明原因。只在首屏发生一次，之后走缓存。
-            if initial && q.is_empty() {
-                if let Ok(r) = &result {
-                    if r.total == 0 {
-                        result = api::github::search_repos(api::github::BROAD_QUERY, 1).await;
-                    }
-                }
-            }
-            let _ = tx.send(TaskMsg::GhLoaded { result, initial }).await;
-        });
-    }
-
-    /// 本地过滤缓存结果（细化搜索不花 GitHub 配额）
-    pub fn refilter_github(&mut self) {
-        let q = self.dl.query.trim().to_lowercase();
-        self.gh_filtered = self
-            .gh_results
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| {
-                q.is_empty()
-                    || r.full_name.to_lowercase().contains(&q)
-                    || r.description
-                        .as_deref()
-                        .is_some_and(|d| d.to_lowercase().contains(&q))
-            })
-            .map(|(i, _)| i)
-            .collect();
-        self.gh_selected = self
-            .gh_selected
-            .min(self.gh_filtered.len().saturating_sub(1));
-    }
-
-    /// 安装选中的 GitHub 仓库为插件（clone + cargo build + 识别，走既有 plugin::install）
-    pub fn spawn_install_github(&mut self) {
-        let Some(&idx) = self.gh_filtered.get(self.gh_selected) else {
-            self.dl.install_status = "没有选中的仓库".into();
-            return;
-        };
-        let repo = self.gh_results[idx].clone();
-        let name = repo.short_name().to_string();
-        let root = self.plugin_root();
-        let url = repo.clone_url();
-        self.dl.installing = true;
-        self.dl.install_status = format!("安装 {name}（克隆 + 构建，首次较慢）…");
-        let task_id = self.begin_task(format!("插件仓库 {name}"));
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            let _ = tx.try_send(TaskMsg::InstallStage {
-                id: task_id,
-                phase: "克隆 + 构建（首次较慢）…".into(),
-                done: 0,
-                total: 0,
-            });
-            // plugin::install 是同步阻塞（git clone + cargo build），
-            // 必须放 blocking 线程池，否则卡住整个 tokio 运行时
-            let result = tokio::task::spawn_blocking(move || crate::plugin::install(&root, &url))
-                .await
-                .unwrap_or_else(|e| Err(anyhow::anyhow!("安装任务异常: {e}")))
-                .map_err(|e| anyhow::anyhow!("{e:#}"));
-            let done = result
-                .as_ref()
-                .map(|info| format!("{} v{}", info.name, info.version))
-                .map_err(|e| anyhow::anyhow!("{e:#}"));
-            let _ = tx
-                .send(TaskMsg::InstallDone {
-                    id: task_id,
-                    result: done,
-                })
-                .await;
-            let _ = tx.send(TaskMsg::GhInstalled { name, result }).await;
-        });
     }
 
     /// 打开 Modrinth 详情页并拉取版本列表
@@ -2939,12 +2764,6 @@ impl App {
     pub fn server_list_for(&self, tab: ServerTab) -> Vec<crate::api::mcserver::JavaServer> {
         match tab {
             ServerTab::User => self.user_servers.clone(),
-            ServerTab::Recommended => self
-                .servers
-                .iter()
-                .filter(|s| s.builtin)
-                .cloned()
-                .collect(),
             ServerTab::All => {
                 let mut out = self.servers.clone();
                 for s in &self.user_servers {
@@ -2992,10 +2811,6 @@ impl App {
                     )
                 }
             }
-            ServerTab::Recommended => format!(
-                "{} 个内置推荐 · 在线 {online} · 回车进服 · r 刷新",
-                list.len()
-            ),
         }
     }
 
@@ -3755,8 +3570,6 @@ impl App {
                 }
             }
             TaskMsg::ModpacksLoaded { result, offset } => self.on_modpacks_loaded(result, offset),
-            TaskMsg::GhLoaded { result, initial } => self.on_gh_loaded(result, initial),
-            TaskMsg::GhInstalled { name, result } => self.on_gh_installed(name, result),
             TaskMsg::MrCoverLoaded { index, img } => {
                 let protocol = img.map(|i| self.picker.new_resize_protocol(i));
                 if index < self.mr_covers.len() {
@@ -3782,34 +3595,6 @@ impl App {
                 }
             }
             TaskMsg::InstallDone { id, result } => self.on_install_done(id, result),
-            TaskMsg::VersionsLoaded(res) => {
-                self.plugin_busy = false;
-                match res {
-                    Ok(items) => {
-                        let n = items.len();
-                        self.plugin_selected = self.plugin_selected.min(n.saturating_sub(1));
-                        self.plugin_status =
-                            format!("{n} 个版本 · [Enter]安装/启动 [d]删除 [r]刷新");
-                        self.plugin_items = items;
-                    }
-                    Err(e) => self.plugin_status = format!("加载失败: {e:#}"),
-                }
-            }
-            TaskMsg::VersionsStatus(st) => {
-                self.plugin_status = st;
-            }
-            TaskMsg::VersionsDone((act, id, res)) => {
-                let ok = res.is_ok();
-                self.plugin_busy = false;
-                self.plugin_status = match res {
-                    Ok(m) => m,
-                    Err(e) => format!("失败: {e:#}"),
-                };
-                if ok && (act == "install" || act == "remove") {
-                    self.spawn_plugin_versions(); // 刷新 installed 标记
-                }
-                let _ = id;
-            }
             TaskMsg::GameExit(code) => self.on_game_exit(code),
             TaskMsg::ServerListLoaded(list) => self.on_server_list_loaded(list),
             TaskMsg::UserServersLoaded { path, result } => {
@@ -4024,52 +3809,6 @@ impl App {
                 self.dl.install_status = format!("找到 {} 个整合包", self.dl.results.len());
             }
             Err(e) => self.dl.install_status = format!("搜索失败: {e}"),
-        }
-    }
-
-    /// GitHub 搜索结果：注册表为空时的宽泛回退要说明白，否则用户以为搜索坏了
-    fn on_gh_loaded(&mut self, result: Result<api::github::SearchResult>, initial: bool) {
-        self.gh_searching = false;
-        match result {
-            Ok(r) => {
-                let fell_back = initial
-                    && self.dl.query.trim().is_empty()
-                    && r.total > 0
-                    && !r.repos.iter().any(|x| x.is_plugin());
-                self.gh_total = r.total;
-                self.gh_rate = match &r.rate_remaining {
-                    Some(v) => format!("· 剩余配额 {v}"),
-                    None => String::new(),
-                };
-                self.gh_results = r.repos;
-                self.gh_selected = 0;
-                self.refilter_github();
-                self.dl.install_status = if fell_back {
-                    format!(
-                        "topic:{} 暂无仓库，先按名字搜；作者打上该 topic 即可被收录（{}）",
-                        api::github::PLUGIN_TOPIC,
-                        self.gh_rate
-                    )
-                } else {
-                    format!("找到 {} 个仓库{}", self.gh_filtered.len(), self.gh_rate)
-                };
-            }
-            Err(e) => self.dl.install_status = format!("搜索失败: {e}"),
-        }
-    }
-
-    fn on_gh_installed(&mut self, name: String, result: Result<crate::plugin::PluginInfo>) {
-        self.dl.installing = false;
-        match result {
-            Ok(info) => {
-                let bin = info
-                    .bin
-                    .as_ref()
-                    .map(|b| b.display().to_string())
-                    .unwrap_or_else(|| "（无二进制）".into());
-                self.dl.install_status = format!("已安装 {name} v{}：{bin}", info.version);
-            }
-            Err(e) => self.dl.install_status = format!("安装 {name} 失败: {e}"),
         }
     }
 
@@ -4752,143 +4491,13 @@ impl App {
             })
     }
 
-    fn find_versions_plugin(&self) -> Option<PathBuf> {
-        crate::plugin::find_by_ability(&self.plugin_root(), "versions").and_then(|p| p.bin)
-    }
-
-    /// 拉取插件版本列表（进入资源大厅「插件」来源时）
-    pub fn spawn_plugin_versions(&mut self) {
-        let Some(bin) = self.find_versions_plugin() else {
-            self.plugin_status = "未找到版本管理插件（provides/versions）".into();
-            return;
-        };
-        self.plugin_bin = Some(bin.clone());
-        self.plugin_busy = true;
-        self.plugin_status = "加载版本列表…".into();
-        let tx = self.tx.clone();
-        let plugin_env = crate::plugin::env_for_bin(&self.plugin_root(), &bin);
-        tokio::spawn(async move {
-            let out = tokio::process::Command::new(&bin)
-                .arg("versions")
-                .envs(plugin_env)
-                .output()
-                .await;
-            let res = match out {
-                Ok(o) if o.status.success() => {
-                    serde_json::from_slice::<Vec<VersionItem>>(&o.stdout)
-                        .map_err(|e| anyhow::anyhow!("解析 versions 失败: {e}"))
-                }
-                Ok(o) => Err(anyhow::anyhow!(
-                    "{}",
-                    String::from_utf8_lossy(&o.stderr)
-                        .trim()
-                        .chars()
-                        .take(120)
-                        .collect::<String>()
-                )),
-                Err(e) => Err(anyhow::anyhow!("执行插件失败: {e}")),
-            };
-            let _ = tx.send(TaskMsg::VersionsLoaded(res)).await;
-        });
-    }
-
-    /// 插件版本动作：install / launch / remove
-    fn spawn_plugin_action(&mut self, action: &str) {
-        if self.plugin_busy {
-            return;
-        }
-        let Some(item) = self.plugin_items.get(self.plugin_selected).cloned() else {
-            return;
-        };
-        let Some(bin) = self.plugin_bin.clone() else {
-            return;
-        };
-        self.plugin_busy = true;
-        self.plugin_status = format!("{action} {} …", item.id);
-        let id = item.id.clone();
-        let act = action.to_string();
-        let tx = self.tx.clone();
-        let plugin_env = crate::plugin::env_for_bin(&self.plugin_root(), &bin);
-        tokio::spawn(async move {
-            let mut child = match tokio::process::Command::new(&bin)
-                .arg(&act)
-                .arg(&id)
-                .envs(plugin_env)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = tx
-                        .send(TaskMsg::VersionsDone((
-                            act,
-                            id,
-                            Err(anyhow::anyhow!("{e}")),
-                        )))
-                        .await;
-                    return;
-                }
-            };
-            // stderr 进度行流式上屏（提取 [n/total] 文件名）
-            if let Some(err) = child.stderr.take() {
-                use tokio::io::AsyncBufReadExt;
-                let tx2 = tx.clone();
-                let act2 = act.clone();
-                tokio::spawn(async move {
-                    let mut lines = tokio::io::BufReader::new(err).lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        let _ = tx2
-                            .send(TaskMsg::VersionsStatus(format!("[{act2}] {line}")))
-                            .await;
-                    }
-                });
-            }
-            let st = child.wait().await;
-            let msg = match st {
-                Ok(s) if s.success() => Ok(match act.as_str() {
-                    "install" => format!("已安装 {id}，回车启动"),
-                    "launch" => format!("{id} 已退出"),
-                    _ => format!("{act} {id} 完成"),
-                }),
-                Ok(s) => Err(anyhow::anyhow!("退出码 {:?}", s.code())),
-                Err(e) => Err(anyhow::anyhow!("{e}")),
-            };
-            let _ = tx.send(TaskMsg::VersionsDone((act, id, msg))).await;
-        });
-    }
-
-    fn handle_plugin_versions_key(&mut self, key: crossterm::event::KeyEvent) {
-        use crossterm::event::KeyCode;
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.plugin_selected > 0 {
-                    self.plugin_selected -= 1;
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.plugin_selected + 1 < self.plugin_items.len() {
-                    self.plugin_selected += 1;
-                }
-            }
-            KeyCode::Enter => {
-                let installed = self
-                    .plugin_items
-                    .get(self.plugin_selected)
-                    .map(|i| i.installed);
-                match installed {
-                    Some(false) => self.spawn_plugin_action("install"),
-                    Some(true) => self.spawn_plugin_action("launch"),
-                    _ => {}
-                }
-            }
-            KeyCode::Char('d') | KeyCode::Char('D') => self.spawn_plugin_action("remove"),
-            KeyCode::Char('r') | KeyCode::Char('R') => self.spawn_plugin_versions(),
-            _ => {}
-        }
-    }
-
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        // 添加服务器表单最优先：输入态必须独占所有按键，连窗口管理器的
+        // Ctrl+W / d / Tab / 方向键也不能抢走，否则名称里的字母打不出来。
+        if self.server_add.is_some() {
+            self.handle_server_add_key(key);
+            return;
+        }
         // 窗口管理器优先：Ctrl+W 进入/退出调整模式；调整模式下方向键/Tab/d 由 wm 消费
         if self.wm.handle_key(key) {
             self.sync_view_from_wm();
@@ -4899,51 +4508,29 @@ impl App {
             self.handle_theme_picker_key(key);
             return;
         }
-        // 添加服务器表单：开着时独占按键
-        if self.server_add.is_some() {
-            self.handle_server_add_key(key);
-            return;
-        }
         // LittleSkin 登录输入模式：短路其余按键处理，只走输入
         if self.ls.input && self.home_view != HomeView::Resource {
             self.handle_global_key(key);
             return;
         }
-        // 服务器页：1/2/3 切标签（Ctrl+数字在多数终端不可达，仍兼容）；
-        // a 添加、x 删除（仅用户标签）。
+        // 服务器页：1/2 直接切标签；a 添加、x 删除（仅用户标签）。
         if self.home_view == HomeView::Server
             && self.login_screen.is_none()
             && !self.role_input
             && !self.shell_input
         {
             use crossterm::event::{KeyCode, KeyModifiers};
-            if key.modifiers.contains(KeyModifiers::CONTROL) {
+            if !key.modifiers.contains(KeyModifiers::ALT) {
                 let tab = match key.code {
                     KeyCode::Char('1') => Some(ServerTab::User),
-                    KeyCode::Char('2') => Some(ServerTab::Recommended),
-                    KeyCode::Char('3') => Some(ServerTab::All),
+                    KeyCode::Char('2') => Some(ServerTab::All),
                     _ => None,
                 };
                 if let Some(tab) = tab {
                     self.set_server_tab(tab);
                     return;
                 }
-            } else if !key.modifiers.contains(KeyModifiers::ALT) {
-                let tab = match key.code {
-                    KeyCode::Char('1') => Some(ServerTab::User),
-                    KeyCode::Char('2') => Some(ServerTab::Recommended),
-                    KeyCode::Char('3') => Some(ServerTab::All),
-                    _ => None,
-                };
-                if let Some(tab) = tab {
-                    self.set_server_tab(tab);
-                    return;
-                }
-                if matches!(key.code, KeyCode::Char('a') | KeyCode::Char('A'))
-                    && (self.home_focus == HomeFocus::List
-                        || self.home_focus == HomeFocus::Banner
-                        || self.server_tab == ServerTab::User)
-                {
+                if matches!(key.code, KeyCode::Char('a') | KeyCode::Char('A')) {
                     self.open_server_add();
                     return;
                 }
@@ -5474,16 +5061,6 @@ impl App {
                 }
             }
             ResourceSource::NetEase => self.map_page = MapPage::Grid,
-            ResourceSource::Github if !self.gh_loaded => {
-                self.gh_loaded = true;
-                self.spawn_search_github_as(true);
-            }
-            ResourceSource::Plugins => {
-                if self.plugin_bin.is_none() || self.plugin_items.is_empty() {
-                    self.spawn_plugin_versions();
-                }
-            }
-            ResourceSource::Github | ResourceSource::Local => {}
         }
     }
 
@@ -5508,51 +5085,6 @@ impl App {
     }
 
     /// Modrinth 资源（分类侧栏 + 网格 + 版本选择详情，网易同款交互）
-    /// GitHub 来源键位：`/` 搜索、`↑↓` 选择、`Enter` 安装（像模组一样）
-    fn handle_github_key(&mut self, key: crossterm::event::KeyEvent) {
-        use crossterm::event::KeyCode;
-        // 搜索输入态：只有 Enter 才发请求（配额 10 次/分钟）
-        if self.gh_search_input {
-            match key.code {
-                KeyCode::Char(c) => self.dl.query.push(c),
-                KeyCode::Backspace => {
-                    self.dl.query.pop();
-                }
-                KeyCode::Enter => {
-                    self.gh_search_input = false;
-                    self.spawn_search_github();
-                }
-                KeyCode::Esc => {
-                    self.gh_search_input = false;
-                    self.dl.query.clear();
-                    self.refilter_github();
-                }
-                _ => {}
-            }
-            return;
-        }
-        match key.code {
-            KeyCode::Char('/') => self.gh_search_input = true,
-            KeyCode::Char('r') => self.spawn_search_github(),
-            KeyCode::Up => self.gh_selected = self.gh_selected.saturating_sub(1),
-            KeyCode::Down => {
-                if self.gh_selected + 1 < self.gh_filtered.len() {
-                    self.gh_selected += 1;
-                }
-            }
-            KeyCode::PageUp => self.gh_selected = self.gh_selected.saturating_sub(10),
-            KeyCode::PageDown => {
-                if self.gh_selected + 10 < self.gh_filtered.len() {
-                    self.gh_selected += 10;
-                }
-            }
-            KeyCode::Home => self.gh_selected = 0,
-            KeyCode::End => self.gh_selected = self.gh_filtered.len().saturating_sub(1),
-            KeyCode::Enter => self.spawn_install_github(),
-            _ => {}
-        }
-    }
-
     fn handle_modrinth_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::KeyCode;
         // 详情页（版本选择，树状结构）
@@ -5704,9 +5236,6 @@ impl App {
         match self.source {
             ResourceSource::Mojang => return self.handle_mojang_key(key),
             ResourceSource::Modrinth => return self.handle_modrinth_key(key),
-            ResourceSource::Github => return self.handle_github_key(key),
-            ResourceSource::Plugins => return self.handle_plugin_versions_key(key),
-            ResourceSource::Local => return,
             ResourceSource::NetEase => {}
         }
         match self.map_page {
@@ -6444,13 +5973,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resource_sources_are_only_netease_mojang_modrinth() {
+        let labels: Vec<&str> = ResourceSource::ALL.iter().map(|s| s.label()).collect();
+        assert_eq!(labels, vec!["NetEase", "Mojang", "Modrinth"]);
+    }
+
     #[tokio::test]
     async fn server_tabs_split_lists_and_remember_selection() {
         let mut app = app();
         app.servers = vec![js("推荐", "rec.example.net", true), js("自定义", "custom.example.net", false)];
         app.user_servers = vec![js("用户", "user.example.net", false)];
         assert_eq!(app.server_list_for(ServerTab::All).len(), 3);
-        assert_eq!(app.server_list_for(ServerTab::Recommended).len(), 1);
         assert_eq!(app.server_list_for(ServerTab::User).len(), 1);
 
         app.selected_server = 1; // All 里选中「自定义」
@@ -6464,26 +5998,17 @@ mod tests {
     #[tokio::test]
     async fn number_keys_switch_server_tabs_only_on_server_page() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let plain = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
-        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let press = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
         let mut app = app();
         app.home_view = HomeView::Instance;
-        app.handle_key(plain('1'));
+        app.handle_key(press('1'));
         assert_eq!(app.server_tab, ServerTab::All, "非服务器页 1 不切标签");
 
         app.home_view = HomeView::Server;
-        app.handle_key(plain('1'));
+        app.handle_key(press('1'));
         assert_eq!(app.server_tab, ServerTab::User);
-        app.handle_key(plain('2'));
-        assert_eq!(app.server_tab, ServerTab::Recommended);
-        app.handle_key(plain('3'));
+        app.handle_key(press('2'));
         assert_eq!(app.server_tab, ServerTab::All);
-
-        // 支持 Ctrl+数字的终端仍然有效
-        app.handle_key(ctrl('1'));
-        assert_eq!(app.server_tab, ServerTab::User);
-        app.handle_key(ctrl('2'));
-        assert_eq!(app.server_tab, ServerTab::Recommended);
     }
 
     #[tokio::test]
@@ -6522,13 +6047,11 @@ mod tests {
         assert_eq!(app.server_tab, ServerTab::All);
 
         app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-        assert_eq!(app.server_tab, ServerTab::Recommended);
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         assert_eq!(app.server_tab, ServerTab::User);
         app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         assert_eq!(app.server_tab, ServerTab::All, "← 到头回绕");
         app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-        assert_eq!(app.server_tab, ServerTab::User, "→ 从 All 回绕到 User");
+        assert_eq!(app.server_tab, ServerTab::User);
     }
 
     #[tokio::test]
@@ -6539,6 +6062,55 @@ mod tests {
         assert!(!HomeFocus::all_for(HomeView::Server).contains(&HomeFocus::Downloads));
         app.set_home_view(HomeView::Server);
         assert_eq!(app.home_focus, HomeFocus::List, "服务器页没有下载面板");
+    }
+
+    #[tokio::test]
+    async fn server_add_form_owns_letter_shortcuts() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let dir = crate::storage::tmp_config_dir("app-server-form");
+        let mut app = App::new_from(dir.clone()).unwrap();
+        let inst_dir = dir.join("inst");
+        std::fs::create_dir_all(&inst_dir).unwrap();
+        app.instances = vec![Instance {
+            bedrock: false,
+            id: "1.21.1".into(),
+            version_type: "release".into(),
+            main_class: "net.minecraft.client.main.Main".into(),
+            assets_index: "17".into(),
+            java_major: 21,
+            dir: inst_dir,
+        }];
+        app.selected_instance = 0;
+        app.home_view = HomeView::Server;
+        app.open_server_add();
+        assert!(app.server_add.is_some());
+        // 这些字母在全局都是快捷键；在表单里必须原样进入输入框
+        for c in "axrfjkcq1".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        let form = app.server_add.as_ref().unwrap();
+        assert_eq!(form.addr, "axrfjkcq1");
+        assert!(app.login_screen.is_none(), "a 不能打开登录页");
+        assert_eq!(app.server_tab, ServerTab::All, "1 不能切标签");
+        assert!(!app.quit, "q 不能退出");
+
+        // WM 调整模式下 d/Tab 也不能抢输入
+        app.wm.mode = tui_wm_core::WmMode::Adjust;
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            app.server_add.as_ref().unwrap().addr,
+            "axrfjkcq1d",
+            "d 应进入输入框，Tab 只切字段"
+        );
+        assert_eq!(app.wm.mode, tui_wm_core::WmMode::Adjust, "WM 不应消费输入键");
+
+        // 取消后，焦点在状态栏也能按 a 打开表单
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.server_add.is_none());
+        app.home_focus = HomeFocus::Status;
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(app.server_add.is_some(), "服务器页 a 应始终打开添加表单");
     }
 
     #[tokio::test]
@@ -6733,87 +6305,6 @@ mod tests {
             "日志里应有完整命令: {:?}",
             app.game_log
         );
-    }
-
-    #[tokio::test]
-    async fn github_local_filter_costs_no_quota() {
-        let mut app = app();
-        app.dl.query = "bedrock".into();
-        app.gh_results = vec![
-            crate::api::github::Repo {
-                full_name: "a/mctl-bedrock".into(),
-                description: Some("基岩版启动".into()),
-                stargazers_count: 12,
-                updated_at: Some("2026-09-01T10:00:00Z".into()),
-                topics: vec!["mctl-plugin".into()],
-                html_url: "https://github.com/a/mctl-bedrock".into(),
-            },
-            crate::api::github::Repo {
-                full_name: "b/unrelated".into(),
-                description: Some("别的项目".into()),
-                stargazers_count: 1,
-                updated_at: None,
-                topics: vec![],
-                html_url: String::new(),
-            },
-        ];
-        app.refilter_github();
-        assert_eq!(app.gh_filtered, vec![0], "只应留下名字/描述命中的");
-        assert!(app.gh_results[0].is_plugin(), "topic 应被识别为插件徽章");
-
-        // 选中项越界要夹住（结果集变小后）
-        app.gh_selected = 5;
-        app.refilter_github();
-        assert_eq!(app.gh_selected, 0);
-    }
-
-    #[tokio::test]
-    async fn github_keys_navigate_and_enter_installs() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = app();
-        app.home_view = HomeView::Resource;
-        app.source = ResourceSource::Github;
-        app.gh_loaded = true;
-        let mk = |full: &str, desc: &str| crate::api::github::Repo {
-            full_name: full.into(),
-            description: Some(desc.into()),
-            stargazers_count: 5,
-            updated_at: None,
-            topics: vec![],
-            html_url: format!("https://github.com/{full}"),
-        };
-        app.gh_results = vec![mk("u/aaa", "x"), mk("u/bbb", "y"), mk("u/ccc", "z")];
-        app.refilter_github();
-        assert_eq!(app.gh_filtered.len(), 3);
-
-        let k = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
-        // ↓ 移动
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.gh_selected, 1);
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.gh_selected, 2, "末尾不应越界");
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.gh_selected, 1);
-        // Home/End
-        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
-        assert_eq!(app.gh_selected, 2);
-        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
-        assert_eq!(app.gh_selected, 0);
-
-        // / 进输入态；打字不发请求（配额太贵），Enter 才发
-        app.handle_key(k('/'));
-        assert!(app.gh_search_input);
-        app.handle_key(k('b'));
-        app.handle_key(k('e'));
-        assert_eq!(app.dl.query, "be", "输入应进查询框");
-        assert!(
-            !app.gh_searching,
-            "打字时不得发请求（未认证配额 10 次/分钟）"
-        );
-        // Esc 取消输入并清空
-        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(!app.gh_search_input);
-        assert!(app.dl.query.is_empty());
     }
 
     #[tokio::test]

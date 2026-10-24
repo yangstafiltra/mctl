@@ -764,7 +764,7 @@ fn servers_panel(frame: &mut Frame, app: &mut App, area: Rect, focused: bool) {
     if area.height == 0 {
         return;
     }
-    // 浏览器式标签栏：Java 国际服 / 用户服务器 (Ctrl+1) / 推荐服务器 (Ctrl+2)
+    // 浏览器式标签栏：用户服务器 (1) / Java 国际服 (2)
     let [tabs_area, cards_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
@@ -814,7 +814,7 @@ fn servers_panel(frame: &mut Frame, app: &mut App, area: Rect, focused: bool) {
     );
 }
 
-/// 服务器页顶部标签栏。每帧回填可点击区域，鼠标点标签和 Ctrl+1/2/3 等价。
+/// 服务器页顶部标签栏。每帧回填可点击区域，鼠标点标签和数字键 1/2 等价。
 fn server_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut rects = Vec::new();

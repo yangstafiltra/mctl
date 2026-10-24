@@ -15,16 +15,14 @@
 - **TUI + CLI**：不带参数进入终端界面；带参数走 `mctl tree` 里的层级命令。
 - **本地实例 / 世界**：扫描已安装版本，管理存档，启动游戏；支持 Java 8 / 17 / 21
   自动选择。
-- **Java 国际服**：服务器页用浏览器式标签分成「Java 国际服 / 用户服务器 /
-  推荐服务器」。状态由原版 Server List Ping 直连获取（版本、在线人数、延迟、
-  favicon）；选中条目后用本地实例 `--server/--port` 进服。
+- **Java 国际服**：服务器页用浏览器式标签分成「用户服务器 / Java 国际服」。
+  状态由原版 Server List Ping 直连获取（版本、在线人数、延迟、favicon）；
+  选中条目后用本地实例 `--server/--port` 进服。
 - **用户服务器双向同步**：在服务器页按 `1` 查看当前实例的
   `servers.dat`，按 `a` 添加、`x` 删除。mctl 写的就是 Java 客户端用的那份
-  文件；Java 里加的服务器，回到 mctl 按 `r` 也能看到。按 `2` 只看内置推荐，
-  按 `3` 回到全部。多数终端会吞掉 Ctrl+数字，所以标签提示用裸数字；
-  支持 Ctrl 数字的终端仍可用 `Ctrl+1/2/3`。
-- **资源下载**：网易资源中心、Modrinth、Mojang、本地文件，以及从 GitHub
-  发现并安装插件（topic：`mctl-plugin`）。
+  文件；Java 里加的服务器，回到 mctl 按 `r` 也能看到。按 `2` 回到
+  「Java 国际服」全部列表。
+- **资源下载**：网易资源中心、Modrinth、Mojang 三个来源。
 - **账号**：4399 登录（网易资源）与 LittleSkin / 离线名（本地与 Java 服务器）。
 - **插件**：从本地路径、文件 URL 或 Git 仓库安装；插件可提供资源来源和版本。
 - **终端体验**：可停靠窗口、39 套内置主题、鼠标/键盘操作、按世界自动截图。
@@ -79,15 +77,14 @@ mctl tree                    # 完整命令树
 
 配置、缓存和下载默认在 `~/.config/mctl/`。设置页可改游戏目录和下载目录。
 服务器页用方向键选卡片，回车用当前本地实例进服；`r` 重新 ping。
-服务器页内按 `1` 切到用户服务器、`2` 切到推荐服务器、`3` 回到全部；
+服务器页内按 `1` 切到用户服务器、`2` 回到 Java 国际服；
 标签也可以直接用鼠标点。焦点在横幅时 `←/→` 循环标签、`↑/↓` 进入卡片网格；
 进入网格后方向键按卡片行列移动。
 
 ### 资源与插件
 
-- TUI 资源页顶部可切换来源：网易 / Mojang / Modrinth / GitHub / 本地 / 插件。
-- GitHub 页只在按 Enter 时发搜索请求，避免打满未认证 API 配额。
-- 插件安装：
+- TUI 资源页顶部可切换来源：网易 / Mojang / Modrinth。
+- 插件安装（不在资源来源里，走插件命令）：
 
 ```bash
 mctl plugin install ./my-plugin
@@ -121,19 +118,16 @@ and a scriptable hierarchical CLI.
   hierarchical commands shown by `mctl tree`.
 - **Local instances / worlds**: scan installed versions, manage saves, and
   launch the game with automatic Java 8 / 17 / 21 selection.
-- **Java servers**: the server page uses browser-style tabs: all servers,
-  user servers, and recommended servers. Status, player counts, latency, and
-  favicons come from the vanilla Server List Ping protocol; pressing Enter
-  joins through a local instance with `--server/--port`.
+- **Java servers**: the server page uses browser-style tabs for user servers
+  and the Java server list. Status, player counts, latency, and favicons come
+  from the vanilla Server List Ping protocol; pressing Enter joins through a
+  local instance with `--server/--port`.
 - **Two-way user-server sync**: press `1` to show the current instance's
   `servers.dat`. Press `a` to add and `x` to remove; mctl writes the same file
   the Java client uses, so servers added in Java appear after pressing `r`,
-  and servers added in mctl appear in Java. Press `2` for built-in
-  recommendations only and `3` to return to all servers. Most terminals
-  swallow Ctrl+digits, so the tabs advertise plain `1/2/3`; where the terminal
-  supports them, `Ctrl+1/2/3` still work.
-- **Resources**: NetEase resource center, Modrinth, Mojang, local files, and
-  GitHub plugin discovery (topic: `mctl-plugin`).
+  and servers added in mctl appear in Java. Press `2` to return to the Java
+  server list.
+- **Resources**: NetEase resource center, Modrinth, and Mojang.
 - **Accounts**: 4399 login for NetEase resources; LittleSkin or offline names
   for local play and Java servers.
 - **Plugins**: install from a local path, file URL, or Git repository; plugins
@@ -194,18 +188,15 @@ mctl tree                    # full command tree
 Configuration, caches, and downloads live under `~/.config/mctl/` by default.
 The settings page can change the game and download directories. In the server
 view, use the arrow keys to select a card and Enter to join with the current
-local instance; press `r` to re-ping. Press `1` for user servers, `2` for
-recommended servers, and `3` back to all; tabs are also clickable. With the
-banner focused, `Left/Right` cycles tabs and `Up/Down` enters the card grid;
-inside the grid the arrow keys move by card row/column.
+local instance; press `r` to re-ping. Press `1` for user servers and `2` for
+the Java server list; tabs are also clickable. With the banner focused,
+`Left/Right` cycles tabs and `Up/Down` enters the card grid; inside the grid
+the arrow keys move by card row/column.
 
 ### Resources and plugins
 
-- The TUI resource view can switch between NetEase, Mojang, Modrinth, GitHub,
-  local files, and plugin-provided sources.
-- The GitHub view only searches when Enter is pressed, staying within the
-  unauthenticated API quota.
-- Install plugins with:
+- The TUI resource view can switch between NetEase, Mojang, and Modrinth.
+- Plugins are installed through the plugin commands, not the resource sources:
 
 ```bash
 mctl plugin install ./my-plugin

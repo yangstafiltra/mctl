@@ -550,14 +550,6 @@ pub fn env_for_bin(root: &Path, bin: &Path) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// 找到声明了 `provides/<ability>` 且有主二进制的插件。
-/// 寻址一律用 `p.path`（真实目录），不用 `p.name`（展示名）——两者可以不同。
-pub fn find_by_ability(root: &Path, ability: &str) -> Option<PluginInfo> {
-    scan_plugins(root)
-        .into_iter()
-        .find(|p| p.path.join("provides").join(ability).is_file() && p.bin.is_some())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

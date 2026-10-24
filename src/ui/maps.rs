@@ -1,6 +1,5 @@
 use crate::app::{App, Focus, MapPage};
 use crate::theme;
-use crate::ui::fit;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -23,9 +22,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ResourceSource::NetEase => draw_netease(frame, app, body),
         ResourceSource::Mojang => draw_official(frame, app, body),
         ResourceSource::Modrinth => draw_modpack(frame, app, body),
-        ResourceSource::Plugins => draw_plugin_versions(frame, app, body),
-        ResourceSource::Github => draw_github(frame, app, body),
-        ResourceSource::Local => draw_placeholder(frame, app, body, "本地资源（待接入）"),
     }
     draw_hint_bar(frame, app, hint_bar);
 }
@@ -44,22 +40,15 @@ fn draw_hint_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             MapPage::Download => " c 清除已结束   Esc 返回详情 ",
         },
         ResourceSource::Mojang => " ↑↓ 选择版本   Enter 安装   r 刷新   [ ] 切换来源 ",
-        ResourceSource::Plugins => " ↑↓ 选择   Enter 安装/启动   d 删除   r 刷新   [ ] 切换来源 ",
         ResourceSource::Modrinth if app.mr_detail_open => " ↑↓ 选择版本   Enter 安装   Esc 返回 ",
         ResourceSource::Modrinth => {
             " Tab 焦点   ↑↓←→ 选择/分类   Enter 选版本   / 搜索   v 版本条件   s 排序   r 刷新   [ ] 切换来源 "
         }
-        ResourceSource::Github if app.gh_search_input => {
-            " 输入关键词   Enter 搜索（GitHub 配额 10 次/分钟）   Esc 取消 "
-        }
-        ResourceSource::Github => " ↑↓ 选择   Enter 安装插件   / 搜索   r 重新拉取   [ ] 切换来源 ",
-        ResourceSource::Local => " [ ] 切换来源 ",
     };
     // 状态（截断防溢出）
     let status = match app.source {
         ResourceSource::NetEase => app.status.clone(),
         ResourceSource::Mojang | ResourceSource::Modrinth => app.dl.install_status.clone(),
-        _ => String::new(),
     };
     let mut spans = Vec::new();
     if !status.is_empty() {
@@ -71,7 +60,7 @@ fn draw_hint_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// 来源条：[NetEase] [Mojang] [Modrinth] [GitHub] [Local]
+/// 来源条：[NetEase] [Mojang] [Modrinth]
 /// 选中项是**底色块**（`theme::selected_block()`，跟随主题/经典主题 = 蓝底黑字），
 /// 切换来源时底色块从左往右刷过去（`App::src_anim_progress`），
 /// 刷到哪一列哪一列翻身；前端一列用亮头部色（`theme::head`）。
@@ -135,148 +124,6 @@ fn active_chip(label: &str, p: f32) -> Vec<Span<'static>> {
     out
 }
 
-fn draw_placeholder(frame: &mut Frame, app: &mut App, area: Rect, msg: &str) {
-    let _ = app;
-    let lines = vec![
-        Line::raw(""),
-        Line::from(Span::styled(msg, theme::dim())).alignment(Alignment::Center),
-        Line::from(Span::styled("（按 ] 或 [ 切换资源源）", theme::dim()))
-            .alignment(Alignment::Center),
-    ];
-    frame.render_widget(
-        Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
-        area,
-    );
-}
-
-/// GitHub 插件发现：搜索框 + 仓库列表，回车即装
-fn draw_github(frame: &mut Frame, app: &mut App, area: Rect) {
-    use crate::api::github::PLUGIN_TOPIC;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(format!(
-            " ⌘ GitHub 插件 {}{} ",
-            if app.dl.query.is_empty() {
-                format!("topic:{PLUGIN_TOPIC}")
-            } else {
-                format!("“{}”", app.dl.query)
-            },
-            app.gh_rate
-        ));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.height < 3 {
-        return;
-    }
-    let [search_area, list_area, foot_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Fill(1),
-        Constraint::Length(1),
-    ])
-    .areas(inner);
-
-    // 搜索框
-    let cursor = if app.gh_search_input { "▌" } else { " " };
-    let q = if app.dl.query.is_empty() {
-        Span::styled(format!(" 搜索（/{cursor}）…"), theme::dim())
-    } else {
-        Span::styled(format!(" /{cursor}{}", app.dl.query), theme::fg())
-    };
-    frame.render_widget(Paragraph::new(Line::from(q)), search_area);
-
-    // 列表
-    let mut items: Vec<ListItem> = Vec::new();
-    if app.gh_searching {
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  搜索中…",
-            theme::dim(),
-        ))));
-    } else if app.gh_filtered.is_empty() {
-        items.push(ListItem::new(Line::from(Span::styled(
-            if app.gh_results.is_empty() {
-                "  没有结果（r 重试）"
-            } else {
-                "  没有匹配的仓库"
-            },
-            theme::dim(),
-        ))));
-    }
-    for (row, &idx) in app.gh_filtered.iter().enumerate() {
-        let r = &app.gh_results[idx];
-        let sel = row == app.gh_selected;
-        let star = if r.is_plugin() { "⬡" } else { " " };
-        let desc = r.description.clone().unwrap_or_else(|| "（无描述）".into());
-        let desc_w = (inner.width as usize).saturating_sub(46);
-        let mut spans = vec![
-            Span::styled(if sel { "▌ " } else { "  " }, theme::accent().bold()),
-            Span::styled(star, theme::primary()),
-            Span::raw(" "),
-            Span::styled(
-                fit(r.short_name(), 26),
-                if sel {
-                    theme::accent().bold()
-                } else {
-                    theme::base()
-                },
-            ),
-            Span::styled(format!(" {:>3}★ ", r.stargazers_count), theme::dim()),
-            Span::styled(
-                fit(&desc, desc_w),
-                if sel { theme::base() } else { theme::dim() },
-            ),
-        ];
-        if sel {
-            for s in spans.iter_mut() {
-                s.style = s.style.add_modifier(Modifier::BOLD);
-            }
-        }
-        if sel {
-            // 选中行铺满内宽 + 整块底色（与其它列表同一口径）
-            let used: usize = spans.iter().map(|s| crate::ui::cell_width_of(&s.content)).sum();
-            if used < inner.width as usize {
-                spans.push(Span::raw(" ".repeat(inner.width as usize - used)));
-            }
-            spans = crate::ui::home::wipe_spans(spans, usize::MAX, theme::selected_block());
-        }
-        items.push(ListItem::new(Line::from(spans)));
-        // 第二行：full_name + 更新日期（仅选中时显示，避免太吵）
-        if sel {
-            items.push(ListItem::new(Line::from(vec![
-                Span::raw("      "),
-                Span::styled(
-                    fit(
-                        &format!("{} · {}", r.full_name, r.updated_day()),
-                        (inner.width as usize).saturating_sub(8),
-                    ),
-                    theme::fg_muted(),
-                ),
-            ])));
-        }
-    }
-    frame.render_widget(List::new(items), list_area);
-
-    // 底部状态
-    let status = if app.dl.installing {
-        Span::styled(
-            " ⏳ 构建中（cargo build --release，首次可能几分钟）",
-            theme::warn(),
-        )
-    } else if !app.dl.install_status.is_empty() {
-        Span::styled(
-            format!(
-                " {}",
-                truncate(&app.dl.install_status, inner.width as usize - 2)
-            ),
-            theme::fg_muted(),
-        )
-    } else {
-        Span::styled(" 选仓库回车安装", theme::dim())
-    };
-    frame.render_widget(Paragraph::new(Line::from(status)), foot_area);
-}
-
-/// NetEase：资源大厅（需要网易账号；未登录只提示，不强求）
 fn draw_netease(frame: &mut Frame, app: &mut App, area: Rect) {
     // 未登录：整页只放一句提示。用网易资源不是必须的（Modrinth/官方面板都不依赖它），
     // 所以这里不做任何拦截式引导。
@@ -1640,65 +1487,6 @@ fn draw_mr_card(frame: &mut Frame, app: &mut App, area: Rect, idx: usize) {
         )),
     ];
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), text_area);
-}
-
-/// 插件版本列表（provides/versions 契约：核心只做通用渲染，数据全部来自插件二进制）
-fn draw_plugin_versions(frame: &mut Frame, app: &mut App, area: Rect) {
-    use ratatui::widgets::{List, ListItem, ListState, Paragraph};
-    let block = crate::ui::home::panel_block("插件资源 · 版本管理", true);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let rows = ratatui::layout::Layout::vertical([
-        ratatui::layout::Constraint::Min(1),
-        ratatui::layout::Constraint::Length(1),
-    ])
-    .split(inner);
-
-    let busy_mark = if app.plugin_busy { "⏳ " } else { "" };
-    let items: Vec<ListItem> = app
-        .plugin_items
-        .iter()
-        .enumerate()
-        .map(|(i, it)| {
-            let sel = i == app.plugin_selected;
-            let mark = if sel { "▌" } else { " " };
-            let check = if it.installed { "✓ " } else { "  " };
-            let size = if it.installed && it.size_mb > 0 {
-                format!("  {:>5} MB", it.size_mb)
-            } else {
-                String::new()
-            };
-            let style = if it.installed {
-                crate::theme::accent()
-            } else {
-                crate::theme::base()
-            };
-            ListItem::new(ratatui::text::Line::from(vec![
-                ratatui::text::Span::styled(format!("{mark}{check}"), style),
-                ratatui::text::Span::styled(
-                    it.name.clone(),
-                    if sel { style.bold() } else { style },
-                ),
-                ratatui::text::Span::styled(size, crate::theme::dim()),
-            ]))
-        })
-        .collect();
-    let mut state = ListState::default();
-    state.select(Some(app.plugin_selected));
-    frame.render_stateful_widget(
-        List::new(items).highlight_style(crate::theme::selected_block()),
-        rows[0],
-        &mut state,
-    );
-
-    frame.render_widget(
-        Paragraph::new(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(busy_mark, crate::theme::warn()),
-            ratatui::text::Span::styled(app.plugin_status.clone(), crate::theme::dim()),
-        ])),
-        rows[1],
-    );
 }
 
 #[cfg(test)]

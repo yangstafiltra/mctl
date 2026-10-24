@@ -9,7 +9,6 @@ use crate::domain::{Category, Credentials};
 use crate::token;
 
 pub mod auth;
-pub mod github;
 pub mod littleskin;
 pub mod mcserver;
 pub const GATEWAY: &str = "https://x19apigatewayobt.nie.netease.com";

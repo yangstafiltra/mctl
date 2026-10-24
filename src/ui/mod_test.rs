@@ -65,8 +65,8 @@ mod tests {
             .filter(|c| !c.is_whitespace())
             .collect();
         assert!(flat.contains("用户服务器1"), "第一个标签");
-        assert!(flat.contains("推荐服务器2"), "第二个标签");
-        assert!(flat.contains("Java国际服3"), "第三个标签");
+        assert!(flat.contains("Java国际服2"), "第二个标签");
+        assert!(!flat.contains("推荐服务器"), "推荐标签已移除");
         assert!(flat.contains("a添加"), "用户标签要提示添加");
 
         app.server_add = Some(ServerAddForm {
@@ -832,36 +832,6 @@ mod extra_view_tests {
         let text = flat(&render(&mut app, 60, 10));
         assert!(!text.contains('█'), "高度不足时不应画 logo");
         assert!(!text.contains("4399账号登录"), "高度不足时不应画卡片");
-    }
-
-    /// GitHub 页：搜索框 + 列表 + topic 徽章 + 选中第二行详情
-    #[tokio::test]
-    async fn github_view_renders_search_box_and_badge() {
-        let mut app = App::new_from(crate::storage::tmp_config_dir("ui")).unwrap();
-        app.home_view = HomeView::Resource;
-        app.sync_wm_from_view();
-        app.source = crate::app::ResourceSource::Github;
-        app.gh_loaded = true;
-        let mk = |full: &str, desc: &str, topics: Vec<&str>| crate::api::github::Repo {
-            full_name: full.into(),
-            description: Some(desc.into()),
-            stargazers_count: 42,
-            updated_at: Some("2026-09-20T08:00:00Z".into()),
-            topics: topics.into_iter().map(String::from).collect(),
-            html_url: format!("https://github.com/{full}"),
-        };
-        app.gh_results = vec![
-            mk("u/mctl-bedrock", "基岩版多版本管理", vec!["mctl-plugin"]),
-            mk("u/other", "无关项目", vec![]),
-        ];
-        app.refilter_github();
-        app.dl.install_status = "找到 2 个仓库· 剩余配额 9".into();
-        let text = flat(&render(&mut app, 100, 34));
-        assert!(text.contains("topic:mctl-plugin"), "标题应显示注册表 topic");
-        assert!(text.contains("mctl-bedrock"), "应列出仓库短名");
-        assert!(text.contains("基岩版多版本管理"), "应列出描述");
-        assert!(text.contains("2026-09-20"), "选中项应显示更新日期");
-        assert!(text.contains("剩余配额9"), "应透出 GitHub 配额");
     }
 
     /// 设置页：焦点字段名铺整块底色（与列表选中项同一口径，不是全屏背景）

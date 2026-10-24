@@ -22,7 +22,6 @@
 | 资源分类、列表、版本、下载字段 | `src/api/mod.rs` | 官方资源中心网页接口行为观察 |
 | Java Server List Ping（握手/状态/favicon） | `src/api/mcserver.rs` | Minecraft 公开协议（wiki.vg / minecraft.wiki） |
 | `servers.dat` NBT 结构与 Modified UTF-8 | `src/servers_dat.rs` | Minecraft 公开 NBT 格式与 Java `DataInput.readUTF` 规范 |
-| GitHub 仓库搜索与 topic 约定 | `src/api/github.rs` | GitHub REST API 公开文档；`mctl-plugin` 是本项目自定 topic |
 | 版本清单、资源索引、库下载 | `src/launcher/meta.rs`、`src/launcher/version.rs` | Mojang piston-meta 公开元数据 |
 | Modrinth 搜索 / 版本 / 下载 | `src/launcher/modpack.rs` | Modrinth 公开 API 文档 |
 
