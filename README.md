@@ -71,6 +71,13 @@ mctl tree                    # 完整命令树
 
 - TUI 资源页顶部可切换来源：网易 / Mojang / Modrinth。
 
+### 截图
+<img width="1920" height="1200" alt="Screenshot_24-10月_20-50-30_15393" src="https://github.com/user-attachments/assets/babe49d8-8a55-47c9-9eb2-ea7e3cce72b7" />
+<img width="1920" height="1200" alt="Screenshot_24-10月_20-50-42_19840" src="https://github.com/user-attachments/assets/14e94daf-417a-447c-afc0-33242a792968" />
+<img width="1920" height="1200" alt="Screenshot_24-10月_21-01-28_5234" src="https://github.com/user-attachments/assets/24280546-85ac-4ff4-bdc5-aa0e298a8bb9" />
+<img width="1920" height="1200" alt="Screenshot_24-10月_21-01-44_13748" src="https://github.com/user-attachments/assets/27e0c895-775b-44d3-b6fc-2d40c076481e" />
+<img width="1920" height="1200" alt="Screenshot_24-10月_21-01-38_26120" src="https://github.com/user-attachments/assets/ec05cc9a-0710-4428-a426-d4b2d1497493" />
+
 
 ### 许可证
 
