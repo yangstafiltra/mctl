@@ -8,17 +8,10 @@ use std::time::Duration;
 use crate::domain::{Category, Credentials};
 use crate::token;
 
-#[cfg(test)]
-mod probe_test;
-
 pub mod auth;
 pub mod github;
 pub mod littleskin;
 pub mod mcserver;
-/// 网易联机/租赁 API：部分接口待 SDK 全链路接入，允许暂时未使用
-#[allow(dead_code)]
-pub mod netease;
-
 pub const GATEWAY: &str = "https://x19apigatewayobt.nie.netease.com";
 pub const CLIENT: &str = "https://x19mclobt.nie.netease.com";
 pub const CORE: &str = "https://x19obtcore.nie.netease.com:8443";

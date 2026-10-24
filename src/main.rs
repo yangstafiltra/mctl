@@ -7,7 +7,6 @@ mod domain;
 mod instance;
 mod launcher;
 mod models;
-mod netease;
 mod plugin;
 mod storage;
 mod text;

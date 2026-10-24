@@ -1,13 +1,12 @@
 [package]
 name = "mctl"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2021"
 authors = ["yangsta"]
 license = "Apache-2.0"
 # 许可证全文见 LICENSE，归属声明见 NOTICE（Apache-2.0 §4d）
 
 [dependencies]
-regex = "1"
 anyhow = "1"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
@@ -20,10 +19,6 @@ aes = "0.8"
 rand = "0.9"
 base64 = "0.22"
 url = "2"
-chacha20 = "0.9"
-rsa = { version = "0.9", features = ["sha2", "hazmat"] }
-crc32fast = "1"
-num-bigint = "0.4"
 # 密码不回显。顺带让密码不必走命令行参数 → 不进 shell history
 rpassword = "7"
 # 只用于把 SIGPIPE 恢复成默认：`mctl tree | head` 这类管道要安静退出，

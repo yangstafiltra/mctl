@@ -532,7 +532,7 @@ pub(crate) fn wipe_spans(
 
 /// 横幅：16:9 大占比主视觉，显示当前世界最新自动截图；无截图时显示 MCTL 立体 ASCII 主视觉
 fn banner_panel(frame: &mut Frame, app: &mut App, area: Rect, hint: &str, focused: bool) {
-    // 有主视觉图（本地=最近世界自动截图）。服务器/租赁页**不放宣传图**：
+    // 有主视觉图（本地=最近世界自动截图）。服务器页**不放宣传图**：
     // 顶部就是 MCTL 大字（用户口径：服务器页顶部是字，不是图）。
     let shot = match app.home_view {
         HomeView::Local => app.banner_shot.as_mut(),
@@ -623,7 +623,7 @@ pub(crate) fn grid_start(sel: usize, page: usize, len: usize, start: usize) -> u
     s.min(max_start)
 }
 
-/// 服务器 / 租赁服：卡片网格（同资源下载的卡片视觉）。
+/// 服务器：卡片网格（同资源下载的卡片视觉）。
 /// 宽高够就是 **3 列 × 3 行**一屏 9 张；选中卡片 = 封面 + 名字高亮，
 /// 外框走「流光描边」（`app.sel_anim_progress`，同世界列表那套，文字不刷色）。
 fn server_cards(
@@ -787,10 +787,17 @@ fn servers_panel(frame: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         .servers
         .iter()
         .map(|s| {
-            (
-                s.name.clone(),
-                format!("v{} · {}", s.version, s.online_text()),
-            )
+            let version = if s.version.is_empty() {
+                "?".to_string()
+            } else {
+                format!("v{}", s.version)
+            };
+            let status = if s.error.is_some() {
+                "无法连接".to_string()
+            } else {
+                s.online_text()
+            };
+            (s.name.clone(), format!("{version} · {status}"))
         })
         .collect();
     let selected = app.selected_server;
@@ -989,7 +996,7 @@ pub fn draw_login_full(frame: &mut Frame, app: &mut App, area: Rect) {
         (
             "◉",
             "4399 账号登录",
-            "网易渠道账号 · 资源大厅 / 联机大厅 / 租赁服",
+            "网易渠道账号 · 资源大厅 / 资源下载",
         ),
         ("⬡", "LittleSkin 登录", "皮肤站外置登录（authlib-injector）"),
     ];

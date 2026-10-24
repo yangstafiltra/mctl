@@ -8,10 +8,8 @@
 /account          账号（token / sead 只报长度）
 /local            本地实例
 /local/<实例>      某实例的本地地图
-/server           联机服务器
-/server/<id>      单个服务器
-/rental           我的租赁服
-/rental/<id>      单个租赁服
+/server           Java 国际服（内置精选 + 自定义）
+/server/<地址>     单个服务器（host:port）
 /resource         资源下载（先选下载源）
 /resource/<源>    某个下载源的资源列表（20 条/页）
 /plugin           插件
@@ -29,8 +27,8 @@ mctl pwd               # 当前位置
 
 ```bash
 mctl local 1.21.1 list         # = mctl local/1.21.1 list
-mctl local info 1.21.1         # = mctl local/1.21.1 info
-mctl rental <id> start         # = cd rental/<id> 再 start
+mctl server list               # 列出并 ping 所有 Java 服务器
+mctl server info mc.hypixel.net
 mctl resource/netease list     # 直接看网易资源第 1 页
 ```
 
@@ -81,11 +79,26 @@ mctl 1.21.1 info
 mctl local list
 mctl local/1.21.1 list
 mctl server list
-mctl server info <item_id>
-mctl rental list
-mctl rental/<id> info
+mctl server info <名称|host:port>
 mctl / install 1.21.1   # 在 /plugin 下强制走全局 install
 ```
+
+## Java 服务器
+
+`/server` 的数据来自「内置精选 + 用户自定义」，状态由原版 Server List Ping
+直连获取（不经过第三方列表 API）。
+
+```bash
+mctl server list                       # 列表 + 版本 / 在线人数 / 延迟
+mctl server info mc.hypixel.net        # 单个服务器详情
+mctl server add mc.example.net:25565 我的服
+mctl server rm mc.example.net:25565
+```
+
+- `info` 既接受地址，也接受内置条目的名字（大小写不敏感）。
+- 自定义条目存在 `~/.config/mctl/servers.json`，TUI 服务器页同步读取。
+- 进服走本地实例 + `--server/--port`，认证沿用 LittleSkin / 离线名。
+  正版验证服需要 Microsoft 登录，alpha 暂不支持，状态栏会提示。
 
 ## 资源下载
 
@@ -110,6 +123,8 @@ mctl 5                    # 直接输入序号也能下载（交互式 CLI 里�
 - 表格是纯文字，不输出任何图片；每张表有「表 1 / 表 2」表序和行序号。
 - 网易资源需要登录（`mctl login`）；Modrinth 不需要。
 - 下载保存到设置里的下载目录，默认 `~/.config/mctl/downloads/`。
+- TUI 的资源页还提供 GitHub（插件发现/安装）、Mojang、本地文件与插件来源；
+  CLI 目前只开放 netease / modrinth 两个来源。
 
 ## 各上下文的命令
 
@@ -119,16 +134,15 @@ mctl 5                    # 直接输入序号也能下载（交互式 CLI 里�
 | `/account` | `list` `info` |
 | `/local` | `list` `info <实例>` `worlds <实例>` `cd <实例>` |
 | `/local/<实例>` | `list` `info [世界]` `worlds` |
-| `/server` | `list [offset] [len] [分类]` `info <id>` `cd <id>` |
-| `/server/<id>` | `info` `list` |
-| `/rental` | `list|mine` `info <id>` `start <id>` `stop <id>` `address <id>` `roles <id>` `cd <id>` |
-| `/rental/<id>` | `info` `start` `stop` `address` `roles`（id 可省略） |
+| `/server` | `list` `info <名称\|host:port>` `add <host[:port]> [名称]` `rm <host[:port]>` `cd <地址>` |
+| `/server/<地址>` | `info` `list` |
 | `/resource` | `list` `source <源>` `cd <源>` |
-| `/resource/<源>` | `list [页码]` `next` `prev` `page <n>` `category [n|key]` `info <序号>` `download <序号> [版本]` `<数字>` |
-| `/plugin` | `list` `info <名称>` `install <url|路径>` `update [名称]` `remove <名称>` |
+| `/resource/<源>` | `list [页码]` `next` `prev` `page <n>` `category [n\|key]` `info <序号>` `download <序号> [版本]` `<数字>` |
+| `/plugin` | `list` `info <名称>` `install <url\|路径>` `update [名称]` `remove <名称>` |
 
-全局命令任何位置都能用：`login`、`status`、`version`、`salt`、`proxy`、
-`install`、`bedrock`、`dl`、`token`、`help`、`tree`、`cli`。
+全局命令任何位置都能用：`login`、`status`、`version`、`install`、`bedrock`、
+`dl`、`token`、`help`、`tree`、`cli`。兼容旧脚本的别名：`detail <地址>` 等于
+`server info`，`online` 等于 `server list`。
 
 > `/plugin` 下的 `install` 指插件安装（层级优先）；要装游戏版本用
 > `mctl / install <版本id>`，或先 `cd /`。其余同名情况同理。
@@ -139,6 +153,3 @@ mctl 5                    # 直接输入序号也能下载（交互式 CLI 里�
   没有凭据。
 - 实例 id 支持唯一前缀；有歧义时会列出候选。
 - 账号信息只输出长度，不打印 token / `sead` 原文。
-- 旧的平铺命令保留：`mctl login`、`mctl salt`、`mctl proxy`、`mctl install`、
-  `mctl plugin ...`、`mctl detail <id>`、`mctl online`。
-- Nix 构建见 [`nix/README.md`](nix/README.md)。

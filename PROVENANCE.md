@@ -1,42 +1,45 @@
 # PROVENANCE · 协议常量与实现出处登记
 
-本文件登记 mctl 里所有"来自外部世界的魔数/常量/端点"的出处口径，便于开源审查。
+本文件登记 mctl 里来自外部世界的端点、字段与协议事实的出处口径，便于开源审查。
 
-总口径：**mctl 实现的是网易客户端与平台之间公开可观察的互操作协议。**
-分析第三方启动器只用于确认事实（端点、字段、时序、取值约束），代码一行不抄；
-仓库内不含任何反编译产物，也不分发第三方/官方的二进制文件。
+总口径：**mctl 实现的是各平台公开可观察的互操作协议。** 代码不含任何反编译
+产物，也不分发官方或第三方的二进制文件；分析闭源客户端只用于确认事实（端点、
+字段、时序、取值约束），实现独立编写。
 
-## 1. 加密与签名
-
-| 常量 / 机制 | 位置 | 出处口径 |
-| --- | --- | --- |
-| HTTP 体 AES 密钥表、IV、keyIdx 位布局 | `src/netease/crypto.rs` | 网易客户端↔平台协议的公开 RE 事实与客户端抓包（多份独立实现一致） |
-| user-token 签名盐 + MD5 流程 | `src/api/mod.rs`（`post_signed`） | 同上 |
-| `Skip32` 角色 UUID 密钥 | `src/netease/crypto.rs`（`role_uuid`） | 同上；社区第三方实现亦公开同一事实 |
-| AuthLib/RPC 帧加密与 CRC | `src/netease/crypto.rs`、`src/netease/rpc.rs` | 客户端 socket 协议事实（抓包 + 公开 RE） |
-
-## 2. 平台接口常量
+## 1. 认证与签名
 
 | 常量 / 机制 | 位置 | 出处口径 |
 | --- | --- | --- |
-| 网关/客户端主机名（x19 系列） | `src/api/netease.rs`（`GATEWAY`/`CLIENT`） | 官方客户端行为观察（DNS + 抓包） |
-| `md5_pair(版本)`：`bootstrapMd5` / `datFileMd5` | `src/api/netease.rs` | 官方 runtime 文件的**内容指纹**（不是代码）：两个独立第三方实现逐值一致，已交叉验证 |
-| `version_enum(版本)`：`game-patch-info` 的 `mc_version` 编码 | `src/launcher/netease.rs` | 官方接口的取值事实（`1.12.2 → 1012002` 这类，来自接口行为与公开资料） |
-| `crc_salt` 候选表 | `src/netease/yggdrasil.rs` | 盐由游戏服务端 `GET /api/home` 下发；服务端可被 `--crc_salt` 覆盖，mctl 用候选探测 + 命中缓存 |
-| X19 协议版本串 | 运行期刷新（`src/api/netease.rs`） | **不写死**：从官方更新接口获取，带本地缓存 |
-| 进服硬约束（`gameid=[0,0]`、`filterkey` 32 位小写、`GameType:2` 等） | `src/launcher/mod.rs`（`netease_preflight`） | 官方客户端行为 + 社区踩坑事实（行为约束，非代码） |
-| 联机/租赁服 `game_id` 语义 | 全为运行期参数 | `game_id` = **所选服务器的 item id**；不得硬编码任何具体服的 id |
-| Java 版本矩阵（<1.16→8 / 1.16–1.20.5→17 / ≥1.20.6→21） | `src/launcher/java.rs` | 官方启动器按版本分发 runtime 的行为事实 |
+| user-token 签名流程 | `src/token.rs`、`src/api/mod.rs` | 网易资源接口的公开 RE 事实与客户端抓包，多份独立实现交叉验证 |
+| 4399 登录的请求/响应字段、AES 变换 | `src/crypto.rs`、`src/api/auth.rs` | 公开网页登录流程观察 + 浏览器抓包 |
+| LittleSkin OAuth / authlib-injector | `src/api/littleskin.rs` | authlib-injector 公开规范与 LittleSkin 文档 |
+| 离线名 UUID 生成 | `src/launcher/mod.rs` | Minecraft 官方离线模式约定 |
 
-## 3. 官方二进制的处理（重要）
+## 2. 平台接口
+
+| 常量 / 机制 | 位置 | 出处口径 |
+| --- | --- | --- |
+| 资源分类、列表、版本、下载字段 | `src/api/mod.rs` | 官方资源中心网页接口行为观察 |
+| Java Server List Ping（握手/状态/favicon） | `src/api/mcserver.rs` | Minecraft 公开协议（wiki.vg / minecraft.wiki） |
+| GitHub 仓库搜索与 topic 约定 | `src/api/github.rs` | GitHub REST API 公开文档；`mctl-plugin` 是本项目自定 topic |
+| 版本清单、资源索引、库下载 | `src/launcher/meta.rs`、`src/launcher/version.rs` | Mojang piston-meta 公开元数据 |
+| Modrinth 搜索 / 版本 / 下载 | `src/launcher/modpack.rs` | Modrinth 公开 API 文档 |
+
+## 3. 官方二进制的处理
 
 | 物 | 处理方式 |
 | --- | --- |
-| 客户端包、natives、runtime 文件 | **不随仓库分发**：安装时从官方 CDN 下载并校验 md5；缺失的 runtime 文件按「已安装版本 → 本地缓存 → 官方包」就地补齐（`src/launcher/netease.rs` 的 `ensure_runtime_native*`） |
-| 曾经内嵌的 runtime native | 已删除并清理历史：该文件曾以内嵌 base64 形式存在于源码中；现已从工作树与**全部提交历史**中移除（`refs/original` 已清理、仓库已 `gc`），改为运行期从官方包就地补齐 |
+| 游戏客户端、库、资产、Java runtime | **不随仓库分发**：安装时从官方源下载，并按官方元数据校验；失败可从镜像重试 |
+| 网易资源包 | 运行时按接口返回的下载地址获取，不内嵌、不再分发 |
 
 ## 4. 明确不做的事
 
-- 不实现/不引用任何第三方启动器的私有后端、账号池、插件生态；
-- 不绕过反作弊、不改官方二进制、不伪装机器码；
-- 不在仓库内出现反编译源码、抓包原文（含真实 uid/token/cookie/主机名/个人路径）。
+- 不绕过正版验证；正版验证服需要 Microsoft 登录，alpha 未实现。
+- 不内置账号池、不代理他人凭据、不实现第三方启动器的私有后端。
+- 不把官方客户端或反编译产物放进仓库。
+
+## 5. vendored 的编译期依赖
+
+`third_party/tui-wm-core` 与 `third_party/bedrock-launcher-core` 来自作者自己的
+上游工程，均为 MIT，见 `third_party/README.md`。它们只提供窗口管理与基岩版
+启动能力，不含平台协议常量。

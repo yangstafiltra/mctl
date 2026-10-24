@@ -449,7 +449,7 @@ mod tests {
         assert!(flat.contains("30%") || flat.contains("29%"), "百分比要在");
     }
 
-    // ---- 卡片网格窗口（租赁服/联机服的方向键手感）----
+    // ---- 卡片网格窗口（Java 服务器的方向键手感）----
 
     #[test]
     fn card_grid_window_keeps_selection_visible() {

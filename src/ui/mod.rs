@@ -130,7 +130,7 @@ fn draw_inner(frame: &mut Frame, app: &mut App) {
             HomeView::Download => maps::draw_download_center(frame, app, body),
             HomeView::Plugins => extra::plugins_view(frame, app, body),
             HomeView::Settings => extra::settings_view(frame, app, body),
-            // 本地/服务器/租赁服：铺满当前聚焦面板（panel_full）或完整日志
+            // 本地/服务器：铺满当前聚焦面板（panel_full）或完整日志
             _ => home::draw(frame, app, body),
         }
         topbar::status_bar(frame, app, status_area);

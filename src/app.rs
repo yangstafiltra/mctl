@@ -932,7 +932,7 @@ pub const WORLD_ANIM_MS: u64 = 420;
 /// 切换视图 → 底色块从左往右刷过去；刷完底色常驻。
 pub const VIEW_ANIM_MS: u64 = 160;
 
-/// 服务器/租赁服卡片选中框的"流光描边"动画时长（毫秒）。
+/// 服务器卡片选中框的"流光描边"动画时长（毫秒）。
 /// 网格内换选中卡片 → 外框被光点从左往右描一圈；描完边框常驻。
 pub const SEL_ANIM_MS: u64 = 420;
 
@@ -995,7 +995,7 @@ pub struct App {
     pub grid_auto_all: bool,
     pub grid_covers: Vec<Option<StatefulProtocol>>,
     pub cover_queue: Vec<usize>,
-    /// 联机服务器 / 租赁服网格封面（索引与列表一一对应，同资源大厅卡片）
+    /// Java 服务器网格封面（索引与列表一一对应，同资源大厅卡片）
     pub srv_covers: Vec<Option<StatefulProtocol>>,
     pub srv_cover_queue: Vec<usize>,
     /// 服务器没有 favicon → 卡片退回纯文字
@@ -1058,10 +1058,10 @@ pub struct App {
     /// 资源中心「来源条」选中块刷色动画的起点（切换来源时置 now）。
     /// 界面按经过时间算刷到什么位置；None = 直接刷满。
     pub src_anim_start: Option<std::time::Instant>,
-    /// 服务器/租赁服卡片网格选中块刷色动画的起点（网格内换选中项时置 now）。
+    /// 服务器卡片网格选中块刷色动画的起点（网格内换选中项时置 now）。
     /// 界面按经过时间算刷到什么位置；None = 直接刷满。
     pub sel_anim_start: Option<std::time::Instant>,
-    /// 服务器/租赁服卡片网格当前列数（UI 每帧回填，↑↓ 按它跳一行）
+    /// 服务器卡片网格当前列数（UI 每帧回填，↑↓ 按它跳一行）
     pub server_grid_cols: usize,
     /// 联机服务器卡片网格的可视窗口起点（UI 每帧校正）
     pub srv_scroll: usize,
@@ -1704,7 +1704,7 @@ impl App {
     // ===== 方向键 = 当前聚焦面板内的内容导航 =====
 
     /// ↑: 面板内内容上移（列表选择上一项、网格向上、状态栏实例切换）
-    /// 服务器/租赁页：横幅只是 MCTL 大字（不放宣传图），没有可操作内容。
+    /// 服务器页：横幅只是 MCTL 大字（不放宣传图），没有可操作内容。
     /// 焦点还停在横幅时按方向键 → 直接落进卡片网格，别让用户觉得"方向键没反应/乱"。
     fn promote_banner_focus_to_grid(&mut self) {
         if matches!(self.home_view, HomeView::Server)
@@ -1715,7 +1715,7 @@ impl App {
     }
 
     pub fn move_content_up(&mut self) {
-        // 与 ↓/←/→ 一致：服务器/租赁页焦点停在横幅时先落进卡片网格，
+        // 与 ↓/←/→ 一致：服务器页焦点停在横幅时先落进卡片网格，
         // 否则进页面后第一次按 ↑ 会「没反应」（横幅没有可上移的内容）
         self.promote_banner_focus_to_grid();
         // 账户面板 dock 常驻，任意视图都可聚焦，导航全视图通用
@@ -2310,7 +2310,7 @@ impl App {
                 self.status = "已刷新世界列表".into();
             }
             "help" | "?" => {
-                self.status = "命令: enter <世界> · plugin … · bedrock [pre] · refresh · quit · help · 快捷键: Ctrl+O 租赁服 / 实例面板聚焦按 o 存档".into();
+                self.status = "命令: enter <世界> · plugin … · bedrock [pre] · refresh · quit · help · 快捷键: 实例面板聚焦按 o 存档 / f 全屏".into();
             }
             "bedrock" => {
                 self.source = ResourceSource::Plugins;
@@ -3017,7 +3017,7 @@ impl App {
         self.src_anim_start = Some(std::time::Instant::now());
     }
 
-    /// 服务器/租赁服卡片网格选中块刷色动画是否还在播（主循环据此提高重绘频率）
+    /// 服务器卡片网格选中块刷色动画是否还在播（主循环据此提高重绘频率）
     pub fn sel_anim_playing(&self) -> bool {
         self.sel_anim_start
             .is_some_and(|t| t.elapsed().as_millis() < u128::from(SEL_ANIM_MS))
@@ -4589,7 +4589,7 @@ impl App {
         }
     }
 
-    /// 角色名编辑态（左下角状态栏，服务器/租赁服视图）：字符直入输入框
+    /// 角色名编辑态（左下角状态栏，服务器视图）：字符直入输入框
     fn key_role_input(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::{KeyCode, KeyModifiers};
         match key.code {
@@ -5750,7 +5750,7 @@ async fn launch_instance_inner(
             tokio::spawn(async move { let _ = tx.send(TaskMsg::LaunchStage(s)).await; });
         }};
     }
-    // 走服务器的启动（租赁服）：缺失的依赖库/资源要能在下载中心看到
+    // 走服务器的启动（Java 国际服）：缺失的依赖库/资源要能在下载中心看到
     let file_cb = |f: launcher::FileProgress| {
         if let Some(id) = task_id {
             send_file_progress(&tx, id, f);

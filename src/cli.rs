@@ -37,7 +37,7 @@ use crate::storage;
 /// 资源列表每页条数（固定 20，翻页按它算 offset）。
 const PAGE_SIZE: i64 = 20;
 
-/// 上下文路径。只保留一层子节点：实例 / 服务器 / 租赁服 / 下载源。
+/// 上下文路径。只保留一层子节点：实例 / 服务器 / 下载源。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Ctx {
     Root,
@@ -404,7 +404,7 @@ async fn dispatch(ctx: Ctx, cmd: &str, rest: &[String]) -> Result<()> {
         "token" => return token_cmd(rest),
         "dl" => return dl_cmd(rest).await,
         "detail" => {
-            // 旧命令：mctl detail <item_id>
+            // 旧命令：mctl detail <名称|host:port>
             let id = rest
                 .first()
                 .ok_or_else(|| anyhow!("用法: mctl detail <item_id>"))?;
@@ -460,7 +460,7 @@ fn cd_cmd(rest: &[String]) -> Result<()> {
             println!("  本层 list / info / worlds；子节点 cd <实例id> 或 mctl <实例id> list")
         }
         Ctx::Local(Some(_)) => println!("  本层 list / info [世界] / worlds"),
-        Ctx::Server(None) => println!("  本层 list / info；子节点 cd <item_id>"),
+        Ctx::Server(None) => println!("  本层 list / info；子节点 cd <host:port>"),
         Ctx::Server(Some(_)) => println!("  本层 list / info（同一份详情）"),
         Ctx::Resource(None) => {
             println!("  本层 list 看下载源；cd netease | modrinth 选择下载源")
@@ -858,12 +858,17 @@ async fn server_table(_rest: &[String]) -> Result<()> {
             (None, None) => s.online_text(),
         };
         let tag = if s.builtin { "内置" } else { "自定义" };
+        let version = if s.version.is_empty() {
+            "-".to_string()
+        } else {
+            crate::text::truncate(&s.version, 24)
+        };
         println!(
-            "  {:<16} {:<28} {:<14} {:<16} {}",
+            "  {:<16} {:<28} {:<26} {:<10} {}",
             s.name,
             s.addr(),
-            if s.version.is_empty() { "?" } else { &s.version },
             status,
+            version,
             tag
         );
     }

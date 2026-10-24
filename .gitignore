@@ -11,7 +11,3 @@ scratch/
 # 客户端运行时目录（游戏按 cwd 生成；若在仓库根目录出现，不入库）
 /config/
 /heypixel/
-
-# Nix 构建产物（nix-build 的 result 符号链接等）
-/result
-/result-*
