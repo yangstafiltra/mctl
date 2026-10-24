@@ -64,9 +64,9 @@ mod tests {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        assert!(flat.contains("Java国际服^3"), "第一个标签");
-        assert!(flat.contains("用户服务器^1"), "Ctrl+1 用户服务器标签");
-        assert!(flat.contains("推荐服务器^2"), "Ctrl+2 推荐服务器标签");
+        assert!(flat.contains("用户服务器1"), "第一个标签");
+        assert!(flat.contains("推荐服务器2"), "第二个标签");
+        assert!(flat.contains("Java国际服3"), "第三个标签");
         assert!(flat.contains("a添加"), "用户标签要提示添加");
 
         app.server_add = Some(ServerAddForm {

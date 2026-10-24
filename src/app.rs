@@ -229,33 +229,35 @@ pub enum HomeFocus {
     Status,
 }
 
+const FOCUS_FIVE: [HomeFocus; 5] = [
+    HomeFocus::Accounts,
+    HomeFocus::Banner,
+    HomeFocus::List,
+    HomeFocus::Downloads,
+    HomeFocus::Status,
+];
+/// 服务器页没有下载面板，别让 j/k 走到一个看不见的「Downloads」焦点上。
+const FOCUS_SERVER: [HomeFocus; 4] = [
+    HomeFocus::Accounts,
+    HomeFocus::Banner,
+    HomeFocus::List,
+    HomeFocus::Status,
+];
+
 impl HomeFocus {
-    /// 当前视图可聚焦面板（5 个不同面板，无重复，j/k 真正遍历所有）
-    pub fn all_for(view: HomeView) -> [HomeFocus; 5] {
+    /// 当前视图可聚焦面板（无重复，j/k 真正遍历所有实际渲染的面板）
+    pub fn all_for(view: HomeView) -> &'static [HomeFocus] {
         match view {
-            // 实例视图是 banner + 世界列表，没有下载面板
+            HomeView::Server => &FOCUS_SERVER,
             HomeView::Instance
             | HomeView::Resource
             | HomeView::Download
             | HomeView::Plugins
-            | HomeView::Settings => [
-                HomeFocus::Accounts,
-                HomeFocus::Banner,
-                HomeFocus::List,
-                HomeFocus::Downloads,
-                HomeFocus::Status,
-            ],
-            HomeView::Server => [
-                HomeFocus::Accounts,
-                HomeFocus::Banner,
-                HomeFocus::List,
-                HomeFocus::Status,
-                HomeFocus::Downloads, // 服务器也有下载面板（空或占位），保证 5 个不同
-            ],
+            | HomeView::Settings => &FOCUS_FIVE,
         }
     }
 
-    /// 会话存取用的稳定序号（与 all_for 面板顺序对齐）
+    /// 会话存取用的稳定序号（不要跟着 all_for 的顺序改）
     pub fn as_index(self) -> usize {
         match self {
             HomeFocus::Accounts => 0,
@@ -963,7 +965,8 @@ pub enum ServerTab {
 }
 
 impl ServerTab {
-    pub const ALL: [ServerTab; 3] = [ServerTab::All, ServerTab::User, ServerTab::Recommended];
+    pub const ALL: [ServerTab; 3] =
+        [ServerTab::User, ServerTab::Recommended, ServerTab::All];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -973,20 +976,21 @@ impl ServerTab {
         }
     }
 
-    /// 标签上的快捷键提示（Ctrl+1/2；All 额外给 Ctrl+3）
+    /// 标签序号。终端普遍吞掉 Ctrl+数字，所以提示裸数字 1/2/3；
+    /// 支持 Ctrl 数字的终端仍然保留 Ctrl 快捷键。
     pub fn hint(self) -> &'static str {
         match self {
-            ServerTab::All => "^3",
-            ServerTab::User => "^1",
-            ServerTab::Recommended => "^2",
+            ServerTab::User => "1",
+            ServerTab::Recommended => "2",
+            ServerTab::All => "3",
         }
     }
 
     pub fn index(self) -> usize {
         match self {
-            ServerTab::All => 0,
-            ServerTab::User => 1,
-            ServerTab::Recommended => 2,
+            ServerTab::User => 0,
+            ServerTab::Recommended => 1,
+            ServerTab::All => 2,
         }
     }
 }
@@ -1465,6 +1469,9 @@ impl App {
         // 而上次的尺寸在用户改过终端窗口后就是错的——记它反而会让首帧按旧尺寸布局。
         // 恢复聚焦面板
         app.home_focus = HomeFocus::from_index(session.home_focus);
+        if !HomeFocus::all_for(app.home_view).contains(&app.home_focus) {
+            app.home_focus = HomeFocus::List;
+        }
         app.restore_ls();
         // 清理上次可能残留的整合包/Forge 安装临时目录
         launcher::modpack::cleanup(&app.mc_dir);
@@ -1789,20 +1796,35 @@ impl App {
     // ===== 方向键 = 当前聚焦面板内的内容导航 =====
 
     /// ↑: 面板内内容上移（列表选择上一项、网格向上、状态栏实例切换）
-    /// 服务器页：横幅只是 MCTL 大字（不放宣传图），没有可操作内容。
-    /// 焦点还停在横幅时按方向键 → 直接落进卡片网格，别让用户觉得"方向键没反应/乱"。
-    fn promote_banner_focus_to_grid(&mut self) {
-        if matches!(self.home_view, HomeView::Server)
+    /// 横幅没有可操作内容：焦点还停在横幅时按方向键，先落进实例世界列表
+    /// 或服务器卡片网格，别让用户觉得"方向键没反应"。
+    /// 返回 true 表示这次按键只转移了焦点，调用方不要再移动选中项。
+    fn promote_banner_focus_to_grid(&mut self) -> bool {
+        if matches!(self.home_view, HomeView::Instance | HomeView::Server)
             && self.home_focus == HomeFocus::Banner
         {
             self.home_focus = HomeFocus::List;
+            return true;
         }
+        false
+    }
+
+    fn cycle_server_tab(&mut self, delta: isize) {
+        let n = ServerTab::ALL.len() as isize;
+        let idx = ServerTab::ALL
+            .iter()
+            .position(|t| *t == self.server_tab)
+            .unwrap_or(0) as isize;
+        let next = (idx + delta).rem_euclid(n) as usize;
+        self.set_server_tab(ServerTab::ALL[next]);
     }
 
     pub fn move_content_up(&mut self) {
-        // 与 ↓/←/→ 一致：服务器页焦点停在横幅时先落进卡片网格，
-        // 否则进页面后第一次按 ↑ 会「没反应」（横幅没有可上移的内容）
-        self.promote_banner_focus_to_grid();
+        // 焦点停在横幅时先落进列表/卡片网格；这一次按键只负责转移焦点，
+        // 不顺手再移动一格（否则第一次 ↓ 会从第 1 张直接跳到下一行）。
+        if self.promote_banner_focus_to_grid() {
+            return;
+        }
         // 账户面板 dock 常驻，任意视图都可聚焦，导航全视图通用
         if self.home_focus == HomeFocus::Accounts {
             if self.selected_account > 0 {
@@ -1854,7 +1876,9 @@ impl App {
 
     /// ↓: 面板内内容下移
     pub fn move_content_down(&mut self) {
-        self.promote_banner_focus_to_grid();
+        if self.promote_banner_focus_to_grid() {
+            return;
+        }
         // 账户面板 dock 常驻，任意视图都可聚焦，导航全视图通用
         if self.home_focus == HomeFocus::Accounts {
             // 账户列表 + [4399]/[LittleSkin] 两个登录项
@@ -1916,7 +1940,15 @@ impl App {
 
     /// ←: 面板内内容左移（网格向左）
     pub fn move_content_left(&mut self) {
-        self.promote_banner_focus_to_grid();
+        // 服务器页横幅聚焦时，←→ 直接切换标签（浏览器标签页手感）；
+        // 进入卡片网格后 ←→ 才是选卡片。
+        if self.home_view == HomeView::Server && self.home_focus == HomeFocus::Banner {
+            self.cycle_server_tab(-1);
+            return;
+        }
+        if self.promote_banner_focus_to_grid() {
+            return;
+        }
         match self.home_view {
             HomeView::Resource
                 if self.focus == Focus::Grid
@@ -1938,7 +1970,13 @@ impl App {
 
     /// →: 面板内内容右移（网格向右）
     pub fn move_content_right(&mut self) {
-        self.promote_banner_focus_to_grid();
+        if self.home_view == HomeView::Server && self.home_focus == HomeFocus::Banner {
+            self.cycle_server_tab(1);
+            return;
+        }
+        if self.promote_banner_focus_to_grid() {
+            return;
+        }
         match self.home_view {
             HomeView::Resource if self.focus == Focus::Grid => {
                 let row_start = self.grid_selected / self.grid_cols * self.grid_cols;
@@ -3459,6 +3497,11 @@ impl App {
         if self.home_view != view {
             self.home_view = view;
             self.view_anim_start = Some(std::time::Instant::now());
+            // 切视图时夹住焦点：例如从实例页的「下载活动」切到服务器页，
+            // 服务器页没有下载面板，留在 Downloads 会让方向键完全没反应。
+            if !HomeFocus::all_for(view).contains(&self.home_focus) {
+                self.home_focus = HomeFocus::List;
+            }
         }
     }
 
@@ -4866,8 +4909,13 @@ impl App {
             self.handle_global_key(key);
             return;
         }
-        // 服务器页：Ctrl+1/2/3 切标签；a 添加、x 删除（仅用户标签）
-        if self.home_view == HomeView::Server && !self.role_input && !self.shell_input {
+        // 服务器页：1/2/3 切标签（Ctrl+数字在多数终端不可达，仍兼容）；
+        // a 添加、x 删除（仅用户标签）。
+        if self.home_view == HomeView::Server
+            && self.login_screen.is_none()
+            && !self.role_input
+            && !self.shell_input
+        {
             use crossterm::event::{KeyCode, KeyModifiers};
             if key.modifiers.contains(KeyModifiers::CONTROL) {
                 let tab = match key.code {
@@ -4881,6 +4929,16 @@ impl App {
                     return;
                 }
             } else if !key.modifiers.contains(KeyModifiers::ALT) {
+                let tab = match key.code {
+                    KeyCode::Char('1') => Some(ServerTab::User),
+                    KeyCode::Char('2') => Some(ServerTab::Recommended),
+                    KeyCode::Char('3') => Some(ServerTab::All),
+                    _ => None,
+                };
+                if let Some(tab) = tab {
+                    self.set_server_tab(tab);
+                    return;
+                }
                 if matches!(key.code, KeyCode::Char('a') | KeyCode::Char('A'))
                     && (self.home_focus == HomeFocus::List
                         || self.home_focus == HomeFocus::Banner
@@ -6404,21 +6462,83 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ctrl_tabs_only_work_on_server_page() {
+    async fn number_keys_switch_server_tabs_only_on_server_page() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let plain = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
         let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
         let mut app = app();
         app.home_view = HomeView::Instance;
-        app.handle_key(ctrl('1'));
-        assert_eq!(app.server_tab, ServerTab::All, "非服务器页 Ctrl+1 不生效");
+        app.handle_key(plain('1'));
+        assert_eq!(app.server_tab, ServerTab::All, "非服务器页 1 不切标签");
 
         app.home_view = HomeView::Server;
+        app.handle_key(plain('1'));
+        assert_eq!(app.server_tab, ServerTab::User);
+        app.handle_key(plain('2'));
+        assert_eq!(app.server_tab, ServerTab::Recommended);
+        app.handle_key(plain('3'));
+        assert_eq!(app.server_tab, ServerTab::All);
+
+        // 支持 Ctrl+数字的终端仍然有效
         app.handle_key(ctrl('1'));
         assert_eq!(app.server_tab, ServerTab::User);
         app.handle_key(ctrl('2'));
         assert_eq!(app.server_tab, ServerTab::Recommended);
-        app.handle_key(ctrl('3'));
+    }
+
+    #[tokio::test]
+    async fn server_arrows_focus_grid_first_then_move() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app();
+        app.home_view = HomeView::Server;
+        app.home_focus = HomeFocus::Banner;
+        app.server_grid_cols = 3;
+        app.servers = (0..8)
+            .map(|i| js(&format!("s{i}"), &format!("s{i}.example.net"), false))
+            .collect();
+        app.selected_server = 0;
+
+        // 第一次方向键只把焦点从横幅送进卡片网格，不能顺手跳一格
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.home_focus, HomeFocus::List);
+        assert_eq!(app.selected_server, 0, "第一次 ↓ 不应跳行");
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.selected_server, 3);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.selected_server, 4);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.selected_server, 3);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.selected_server, 0);
+    }
+
+    #[tokio::test]
+    async fn server_banner_left_right_cycles_tabs() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app();
+        app.home_view = HomeView::Server;
+        app.home_focus = HomeFocus::Banner;
         assert_eq!(app.server_tab, ServerTab::All);
+
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.server_tab, ServerTab::Recommended);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.server_tab, ServerTab::User);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.server_tab, ServerTab::All, "← 到头回绕");
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.server_tab, ServerTab::User, "→ 从 All 回绕到 User");
+    }
+
+    #[tokio::test]
+    async fn switching_to_server_drops_phantom_download_focus() {
+        let mut app = app();
+        app.home_view = HomeView::Instance;
+        app.home_focus = HomeFocus::Downloads;
+        assert!(!HomeFocus::all_for(HomeView::Server).contains(&HomeFocus::Downloads));
+        app.set_home_view(HomeView::Server);
+        assert_eq!(app.home_focus, HomeFocus::List, "服务器页没有下载面板");
     }
 
     #[tokio::test]
@@ -6965,7 +7085,7 @@ mod tests {
     async fn focus_cycle_filters_by_view() {
         let mut app = app();
         app.home_view = HomeView::Server;
-        assert_eq!(HomeFocus::all_for(HomeView::Server).len(), 5);
+        assert_eq!(HomeFocus::all_for(HomeView::Server).len(), 4);
         // 走生产路径：j/k 实际调的就是 move_focus_down（旧的 cycle_home_focus
         // 包装器已删——它没有任何调用方，而底层 all_for/next 是活的）
         app.home_focus = HomeFocus::Accounts;
@@ -6976,13 +7096,7 @@ mod tests {
         app.move_focus_down();
         assert_eq!(app.home_focus, HomeFocus::Status);
         app.move_focus_down();
-        assert_eq!(
-            app.home_focus,
-            HomeFocus::Downloads,
-            "服务器视图现在有 Downloads 面板"
-        );
-        app.move_focus_down();
-        assert_eq!(app.home_focus, HomeFocus::Accounts, "循环回到账户");
+        assert_eq!(app.home_focus, HomeFocus::Accounts, "服务器页没有下载面板，直接回账户");
         // 焦点同步到 dock 高亮（Accounts → win_id::ACCOUNTS）
         assert_eq!(app.wm.active, win_id::ACCOUNTS);
     }

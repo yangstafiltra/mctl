@@ -18,9 +18,11 @@
 - **Java 国际服**：服务器页用浏览器式标签分成「Java 国际服 / 用户服务器 /
   推荐服务器」。状态由原版 Server List Ping 直连获取（版本、在线人数、延迟、
   favicon）；选中条目后用本地实例 `--server/--port` 进服。
-- **用户服务器双向同步**：在服务器页按 `Ctrl+1` 查看当前实例的
+- **用户服务器双向同步**：在服务器页按 `1` 查看当前实例的
   `servers.dat`，按 `a` 添加、`x` 删除。mctl 写的就是 Java 客户端用的那份
-  文件；Java 里加的服务器，回到 mctl 按 `r` 也能看到。`Ctrl+2` 只看内置推荐。
+  文件；Java 里加的服务器，回到 mctl 按 `r` 也能看到。按 `2` 只看内置推荐，
+  按 `3` 回到全部。多数终端会吞掉 Ctrl+数字，所以标签提示用裸数字；
+  支持 Ctrl 数字的终端仍可用 `Ctrl+1/2/3`。
 - **资源下载**：网易资源中心、Modrinth、Mojang、本地文件，以及从 GitHub
   发现并安装插件（topic：`mctl-plugin`）。
 - **账号**：4399 登录（网易资源）与 LittleSkin / 离线名（本地与 Java 服务器）。
@@ -77,8 +79,9 @@ mctl tree                    # 完整命令树
 
 配置、缓存和下载默认在 `~/.config/mctl/`。设置页可改游戏目录和下载目录。
 服务器页用方向键选卡片，回车用当前本地实例进服；`r` 重新 ping。
-服务器页内 `Ctrl+1` 切到用户服务器、`Ctrl+2` 切到推荐服务器、`Ctrl+3`
-回到全部；标签也可以直接用鼠标点。
+服务器页内按 `1` 切到用户服务器、`2` 切到推荐服务器、`3` 回到全部；
+标签也可以直接用鼠标点。焦点在横幅时 `←/→` 循环标签、`↑/↓` 进入卡片网格；
+进入网格后方向键按卡片行列移动。
 
 ### 资源与插件
 
@@ -122,11 +125,13 @@ and a scriptable hierarchical CLI.
   user servers, and recommended servers. Status, player counts, latency, and
   favicons come from the vanilla Server List Ping protocol; pressing Enter
   joins through a local instance with `--server/--port`.
-- **Two-way user-server sync**: `Ctrl+1` shows the current instance's
+- **Two-way user-server sync**: press `1` to show the current instance's
   `servers.dat`. Press `a` to add and `x` to remove; mctl writes the same file
   the Java client uses, so servers added in Java appear after pressing `r`,
-  and servers added in mctl appear in Java. `Ctrl+2` shows built-in
-  recommendations only.
+  and servers added in mctl appear in Java. Press `2` for built-in
+  recommendations only and `3` to return to all servers. Most terminals
+  swallow Ctrl+digits, so the tabs advertise plain `1/2/3`; where the terminal
+  supports them, `Ctrl+1/2/3` still work.
 - **Resources**: NetEase resource center, Modrinth, Mojang, local files, and
   GitHub plugin discovery (topic: `mctl-plugin`).
 - **Accounts**: 4399 login for NetEase resources; LittleSkin or offline names
@@ -189,9 +194,10 @@ mctl tree                    # full command tree
 Configuration, caches, and downloads live under `~/.config/mctl/` by default.
 The settings page can change the game and download directories. In the server
 view, use the arrow keys to select a card and Enter to join with the current
-local instance; press `r` to re-ping. `Ctrl+1` switches to user servers,
-`Ctrl+2` to recommended servers, and `Ctrl+3` back to all; tabs are also
-clickable.
+local instance; press `r` to re-ping. Press `1` for user servers, `2` for
+recommended servers, and `3` back to all; tabs are also clickable. With the
+banner focused, `Left/Right` cycles tabs and `Up/Down` enters the card grid;
+inside the grid the arrow keys move by card row/column.
 
 ### Resources and plugins
 
