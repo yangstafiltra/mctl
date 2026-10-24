@@ -5,6 +5,8 @@
 
 > **alpha**：`0.1.0-alpha.1`。核心流程可用，接口和界面仍可能调整。
 > 目前只在 Linux 上实测；Windows / macOS 未验证。
+>
+> **关于作者**：本人是高三生，时间有限；项目主要由 AI 生成，可能有不少问题，欢迎多提 Issue。
 
 ---
 
@@ -111,6 +113,8 @@ and a scriptable hierarchical CLI.
 
 > **alpha**: `0.1.0-alpha.1`. Core flows work, but interfaces may change.
 > Tested on Linux only; Windows and macOS are unverified.
+>
+> **About the author**: I'm a high-school senior with limited time. This project is largely AI-generated and may contain many issues; please open an issue when you find one.
 
 ### Features
 
