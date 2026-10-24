@@ -42,25 +42,9 @@
 需要 Rust（建议最新 stable）和 Java（启动游戏时使用）：
 
 ```bash
-git clone <repo-url> mctl
+git clone https://github.com/yangstafiltra/mctl.git
 cd mctl
-cargo build --release
-./target/release/mctl
-```
-
-依赖已 vendored 到 `third_party/`，干净 clone 可离线解析路径依赖；首次构建仍需
-从 crates.io 下载 Rust 依赖。
-
-也可以直接装进 `~/.cargo/bin`：
-
-```bash
-# 在仓库目录里
-cargo install --path . --locked
-
-# 或者直接从 Git 仓库安装
-cargo install --git <repo-url> --locked
-
-mctl --version
+cargo install --path ./ --force 
 ```
 
 升级时重跑同一条命令并加 `--force`。`cargo install` 只编译并安装可执行文件，
@@ -83,16 +67,10 @@ mctl tree                    # 完整命令树
 标签也可以直接用鼠标点。焦点在横幅时 `←/→` 循环标签、`↑/↓` 进入卡片网格；
 进入网格后方向键按卡片行列移动。
 
-### 资源与插件
+### 资源
 
 - TUI 资源页顶部可切换来源：网易 / Mojang / Modrinth。
-- 插件安装（不在资源来源里，走插件命令）：
 
-```bash
-mctl plugin install ./my-plugin
-mctl plugin install https://github.com/owner/repo
-mctl plugin list
-```
 
 ### 许可证
 
@@ -152,26 +130,9 @@ and a scriptable hierarchical CLI.
 Rust (latest stable recommended) and Java are required:
 
 ```bash
-git clone <repo-url> mctl
+git clone https://github.com/yangstafiltra/mctl.git
 cd mctl
-cargo build --release
-./target/release/mctl
-```
-
-The two compile-time path dependencies are vendored under `third_party/`, so a
-clean clone resolves them offline. The first build still downloads crates from
-crates.io.
-
-To install the binary into `~/.cargo/bin`:
-
-```bash
-# from a clone
-cargo install --path . --locked
-
-# or straight from Git
-cargo install --git <repo-url> --locked
-
-mctl --version
+cargo install --path ./ --force 
 ```
 
 Re-run the same command with `--force` to upgrade. `cargo install` only builds
@@ -197,16 +158,10 @@ the Java server list; tabs are also clickable. With the banner focused,
 `Left/Right` cycles tabs and `Up/Down` enters the card grid; inside the grid
 the arrow keys move by card row/column.
 
-### Resources and plugins
+### Resources
 
 - The TUI resource view can switch between NetEase, Mojang, and Modrinth.
-- Plugins are installed through the plugin commands, not the resource sources:
 
-```bash
-mctl plugin install ./my-plugin
-mctl plugin install https://github.com/owner/repo
-mctl plugin list
-```
 
 ### License
 
