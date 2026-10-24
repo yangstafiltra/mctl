@@ -98,6 +98,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let area = frame.area();
         theme_picker::draw(frame, app, area);
     }
+    if app.server_add.is_some() {
+        let area = frame.area();
+        home::server_add_dialog(frame, app, area);
+    }
 }
 
 fn draw_inner(frame: &mut Frame, app: &mut App) {

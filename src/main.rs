@@ -8,6 +8,7 @@ mod instance;
 mod launcher;
 mod models;
 mod plugin;
+mod servers_dat;
 mod storage;
 mod text;
 mod theme;

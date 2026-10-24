@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::app::{App, HomeView};
+    use crate::app::{App, HomeView, ServerAddForm, ServerTab};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use tokio;
@@ -49,6 +49,41 @@ mod tests {
         for l in &lines {
             eprintln!("|{l}");
         }
+    }
+
+    /// 服务器页：浏览器式标签 + Ctrl 提示；添加浮层要能盖在页面上
+    #[tokio::test]
+    async fn server_page_has_tabs_and_add_dialog() {
+        let mut app = App::new_from(crate::storage::tmp_config_dir("ui-server-tabs")).unwrap();
+        app.home_view = HomeView::Server;
+        app.set_server_tab(ServerTab::User); // 顺带生成「a 添加」提示
+        app.term_size = (110, 36);
+        let backend = render(&mut app, 110, 36);
+        let flat: String = dump(&backend)
+            .join("\n")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(flat.contains("Java国际服^3"), "第一个标签");
+        assert!(flat.contains("用户服务器^1"), "Ctrl+1 用户服务器标签");
+        assert!(flat.contains("推荐服务器^2"), "Ctrl+2 推荐服务器标签");
+        assert!(flat.contains("a添加"), "用户标签要提示添加");
+
+        app.server_add = Some(ServerAddForm {
+            addr: "wdsj.net".into(),
+            name: "我的服".into(),
+            focus: 0,
+            error: String::new(),
+        });
+        let backend = render(&mut app, 110, 36);
+        let flat: String = dump(&backend)
+            .join("\n")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(flat.contains("添加Java服务器"), "浮层标题");
+        assert!(flat.contains("servers.dat"), "要说明写入 servers.dat");
+        assert!(flat.contains("wdsj.net"), "地址输入框回显");
     }
 
     #[tokio::test]

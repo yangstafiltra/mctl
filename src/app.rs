@@ -40,6 +40,7 @@ pub enum TaskMsg {
     /// 联机服务器网格封面加载完成
     SrvCoverLoaded {
         index: usize,
+        gen: u64,
         img: Option<image::DynamicImage>,
     },
     /// 网易资源 BE（基岩版）检查完成（None=请求失败）
@@ -119,6 +120,11 @@ pub enum TaskMsg {
     InstallDone { id: u64, result: Result<String> },
     /// 服务器页：Java 国际服列表 + 状态 ping 完成
     ServerListLoaded(Vec<crate::api::mcserver::JavaServer>),
+    /// 服务器页：当前实例的 servers.dat 读取 + ping 完成
+    UserServersLoaded {
+        path: PathBuf,
+        result: Result<Vec<crate::api::mcserver::JavaServer>>,
+    },
     /// 服务器页：一键进服完成（进程 PID）
     ServerDone(Result<u32>),
     /// 服务器页：横幅宣传图加载完成
@@ -944,6 +950,57 @@ pub struct ThemePicker {
     pub saved: String,
 }
 
+/// 服务器页的三个标签（浏览器式，Ctrl+1/2 直达）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ServerTab {
+    /// 推荐 + mctl 自定义 + 当前实例用户服务器
+    #[default]
+    All,
+    /// 当前实例 `servers.dat` 里的服务器（与 Java 双向同步）
+    User,
+    /// 内置精选推荐
+    Recommended,
+}
+
+impl ServerTab {
+    pub const ALL: [ServerTab; 3] = [ServerTab::All, ServerTab::User, ServerTab::Recommended];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ServerTab::All => "Java 国际服",
+            ServerTab::User => "用户服务器",
+            ServerTab::Recommended => "推荐服务器",
+        }
+    }
+
+    /// 标签上的快捷键提示（Ctrl+1/2；All 额外给 Ctrl+3）
+    pub fn hint(self) -> &'static str {
+        match self {
+            ServerTab::All => "^3",
+            ServerTab::User => "^1",
+            ServerTab::Recommended => "^2",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            ServerTab::All => 0,
+            ServerTab::User => 1,
+            ServerTab::Recommended => 2,
+        }
+    }
+}
+
+/// 在服务器页按 a 打开的添加表单。
+#[derive(Debug, Clone, Default)]
+pub struct ServerAddForm {
+    pub addr: String,
+    pub name: String,
+    /// 0 = 地址，1 = 名称
+    pub focus: usize,
+    pub error: String,
+}
+
 pub struct App {
     // ---- 顶栏 / 横幅 ----
     pub home_view: HomeView,
@@ -961,6 +1018,17 @@ pub struct App {
     pub server_loading: bool,
     pub server_status: String,
     pub server_launching: bool,
+    /// 服务器页当前标签 + 每个标签各自记住的选中项
+    pub server_tab: ServerTab,
+    pub server_tab_sel: [usize; 3],
+    /// 当前实例 `servers.dat` 的条目（与 Java 客户端共用）
+    pub user_servers: Vec<crate::api::mcserver::JavaServer>,
+    pub user_servers_loading: bool,
+    pub user_servers_error: Option<String>,
+    /// 添加表单（Some = 浮层打开，按键只进表单）
+    pub server_add: Option<ServerAddForm>,
+    /// 服务器标签的屏幕区域（鼠标点击用；每帧渲染时回填）
+    pub server_tab_rects: Vec<(ratatui::layout::Rect, ServerTab)>,
     /// 界面聚焦面板（Tab 轮换）
     pub home_focus: HomeFocus,
     /// 当前聚焦面板全屏（f 切换）
@@ -992,6 +1060,8 @@ pub struct App {
     /// Java 服务器网格封面（索引与列表一一对应，同资源大厅卡片）
     pub srv_covers: Vec<Option<StatefulProtocol>>,
     pub srv_cover_queue: Vec<usize>,
+    /// 封面批次：切标签/重载时 +1，旧批次的结果直接丢弃
+    pub srv_cover_gen: u64,
     /// 服务器没有 favicon → 卡片退回纯文字
     pub srv_cover_none: Vec<bool>,
     /// 网易网格 BE（基岩版）标记缓存（None=未检查或检查失败）
@@ -1202,6 +1272,13 @@ impl App {
             server_loading: false,
             server_status: String::new(),
             server_launching: false,
+            server_tab: ServerTab::All,
+            server_tab_sel: [0; 3],
+            user_servers: Vec::new(),
+            user_servers_loading: false,
+            user_servers_error: None,
+            server_add: None,
+            server_tab_rects: Vec::new(),
             home_focus: HomeFocus::Banner,
             home_panel_full: false,
             launch_world: None,
@@ -1229,6 +1306,7 @@ impl App {
             cover_queue: Vec::new(),
             srv_covers: Vec::new(),
             srv_cover_queue: Vec::new(),
+            srv_cover_gen: 0,
             srv_cover_none: Vec::new(),
             grid_be: Vec::new(),
             be_queue: Vec::new(),
@@ -1484,6 +1562,20 @@ impl App {
         use ratatui::layout::Rect;
         // 事件循环不持有最新 area，用最近一次终端尺寸近似
         let area = Rect::new(0, 1, self.term_size.0, self.term_size.1.saturating_sub(2));
+        // 服务器标签页：点击直接切换（只在自己画过标签时生效）
+        if self.home_view == HomeView::Server
+            && matches!(ev.kind, MouseEventKind::Down(MouseButton::Left))
+        {
+            if let Some((_, tab)) = self
+                .server_tab_rects
+                .iter()
+                .find(|(r, _)| r.contains((ev.column, ev.row).into()))
+            {
+                let tab = *tab;
+                self.set_server_tab(tab);
+                return;
+            }
+        }
         // 点击 dock「视图」窗口内的某项 → 切换主区窗口
         if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
             if let Some(rect) = self.wm.window_rect(area, win_id::VIEWS) {
@@ -1745,6 +1837,7 @@ impl App {
                 }
                 HomeFocus::Status if self.selected_instance > 0 => {
                     self.selected_instance -= 1;
+                    self.reload_user_servers_for_instance();
                 }
                 _ => {}
             },
@@ -1789,7 +1882,7 @@ impl App {
                 HomeFocus::List => {
                     // 卡片网格：↓ 跳一行；末行不满时落到最后一行的同列
                     let step = self.server_grid_cols.max(1);
-                    let len = self.servers.len();
+                    let len = self.current_server_list().len();
                     let mut next = self.selected_server;
                     if self.selected_server + step < len {
                         next = self.selected_server + step;
@@ -1807,6 +1900,7 @@ impl App {
                 }
                 HomeFocus::Status if self.selected_instance + 1 < self.instances.len() => {
                     self.selected_instance += 1;
+                    self.reload_user_servers_for_instance();
                 }
                 _ => {}
             },
@@ -1855,7 +1949,8 @@ impl App {
             }
             HomeView::Server if self.home_focus == HomeFocus::List => {
                 let cols = self.server_grid_cols.max(1);
-                let row_end = (self.selected_server / cols * cols + cols).min(self.servers.len());
+                let row_end =
+                    (self.selected_server / cols * cols + cols).min(self.current_server_list().len());
                 if cols > 1 && self.selected_server + 1 < row_end {
                     self.selected_server += 1;
                     self.bump_sel_anim();
@@ -2043,7 +2138,11 @@ impl App {
     /// 服务器卡片封面：Java 协议的 status 响应自带 favicon（data URL），
     /// 直接解码，不发额外网络请求。没有 favicon 就标记无图，卡片退回纯文字。
     pub fn spawn_srv_cover(&mut self, index: usize) {
-        let Some(bytes) = self.servers.get(index).and_then(|s| s.favicon_bytes()) else {
+        let Some(bytes) = self
+            .current_server_list()
+            .get(index)
+            .and_then(|s| s.favicon_bytes())
+        else {
             if index < self.srv_cover_none.len() {
                 self.srv_cover_none[index] = true;
             }
@@ -2051,11 +2150,14 @@ impl App {
             return;
         };
         let tx = self.tx.clone();
+        let gen = self.srv_cover_gen;
         tokio::spawn(async move {
             let img = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes).ok())
                 .await
                 .unwrap_or(None);
-            let _ = tx.send(TaskMsg::SrvCoverLoaded { index, img }).await;
+            let _ = tx
+                .send(TaskMsg::SrvCoverLoaded { index, gen, img })
+                .await;
         });
     }
 
@@ -2785,6 +2887,316 @@ impl App {
         id
     }
 
+    /// 当前实例的 `servers.dat` 路径（基岩版/无实例返回 None）
+    pub fn user_servers_path(&self) -> Option<PathBuf> {
+        let inst = self.instances.get(self.selected_instance)?;
+        if inst.bedrock {
+            None
+        } else {
+            Some(inst.dir.join("servers.dat"))
+        }
+    }
+
+    /// 某个标签下的服务器列表。All 会做 host:port 去重。
+    pub fn server_list_for(&self, tab: ServerTab) -> Vec<crate::api::mcserver::JavaServer> {
+        match tab {
+            ServerTab::User => self.user_servers.clone(),
+            ServerTab::Recommended => self
+                .servers
+                .iter()
+                .filter(|s| s.builtin)
+                .cloned()
+                .collect(),
+            ServerTab::All => {
+                let mut out = self.servers.clone();
+                for s in &self.user_servers {
+                    if !out
+                        .iter()
+                        .any(|x| x.host.eq_ignore_ascii_case(&s.host) && x.port == s.port)
+                    {
+                        out.push(s.clone());
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    /// 当前标签的列表
+    pub fn current_server_list(&self) -> Vec<crate::api::mcserver::JavaServer> {
+        self.server_list_for(self.server_tab)
+    }
+
+    /// 当前标签选中的服务器
+    pub fn current_server_entry(&self) -> Option<crate::api::mcserver::JavaServer> {
+        self.current_server_list().get(self.selected_server).cloned()
+    }
+
+    fn server_tab_status(&self) -> String {
+        let list = self.current_server_list();
+        let online = list.iter().filter(|s| s.error.is_none()).count();
+        match self.server_tab {
+            ServerTab::All => format!(
+                "全部 {} 个 · 在线 {online} · ↑↓←→ 选择 · 回车进服 · a 添加 · r 刷新",
+                list.len()
+            ),
+            ServerTab::User => {
+                if self.user_servers_path().is_none() {
+                    "当前实例不是 Java 版，无法读取 servers.dat".to_string()
+                } else if self.user_servers_error.is_some() {
+                    "读取 servers.dat 失败（按 r 重试）".to_string()
+                } else if self.user_servers_loading {
+                    "正在读取 servers.dat…".to_string()
+                } else {
+                    format!(
+                        "{} 个 · 与 Java 共用 servers.dat · a 添加 · x 删除 · r 刷新",
+                        list.len()
+                    )
+                }
+            }
+            ServerTab::Recommended => format!(
+                "{} 个内置推荐 · 在线 {online} · 回车进服 · r 刷新",
+                list.len()
+            ),
+        }
+    }
+
+    /// 切换服务器标签，保留各标签自己的选中项。
+    pub fn set_server_tab(&mut self, tab: ServerTab) {
+        if self.server_tab == tab {
+            return;
+        }
+        self.server_tab_sel[self.server_tab.index()] = self.selected_server;
+        self.server_tab = tab;
+        self.selected_server = self.server_tab_sel[tab.index()];
+        let len = self.current_server_list().len();
+        if self.selected_server >= len {
+            self.selected_server = len.saturating_sub(1);
+        }
+        self.srv_scroll = 0;
+        self.reset_server_covers();
+        if !self.server_launching {
+            self.server_status = self.server_tab_status();
+        }
+        self.bump_sel_anim();
+    }
+
+    fn reset_server_covers(&mut self) {
+        self.srv_cover_gen = self.srv_cover_gen.wrapping_add(1);
+        let len = self.current_server_list().len();
+        self.srv_covers = (0..len).map(|_| None).collect();
+        self.srv_cover_queue.clear();
+        self.srv_cover_none = vec![false; len];
+    }
+
+    /// 换了实例：先清掉旧列表，避免新实例加载完成前还显示上一个实例的服务器。
+    fn reload_user_servers_for_instance(&mut self) {
+        self.user_servers.clear();
+        self.user_servers_error = None;
+        self.selected_server = 0;
+        self.server_tab_sel[ServerTab::User.index()] = 0;
+        self.reset_server_covers();
+        self.spawn_load_user_servers();
+    }
+
+    /// 读取当前实例的 `servers.dat` 并 ping（与 Java 客户端双向同步）。
+    pub fn spawn_load_user_servers(&mut self) {
+        let Some(path) = self.user_servers_path() else {
+            self.user_servers.clear();
+            self.user_servers_error = None;
+            self.user_servers_loading = false;
+            self.reset_server_covers();
+            return;
+        };
+        self.user_servers_loading = true;
+        self.user_servers_error = None;
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = crate::api::mcserver::load_user(&path).await;
+            let _ = tx
+                .send(TaskMsg::UserServersLoaded { path, result })
+                .await;
+        });
+    }
+
+    fn on_user_servers_loaded(
+        &mut self,
+        path: PathBuf,
+        result: Result<Vec<crate::api::mcserver::JavaServer>>,
+    ) {
+        // 加载期间切了实例 → 旧响应丢弃
+        if self.user_servers_path().as_deref() != Some(path.as_path()) {
+            return;
+        }
+        self.user_servers_loading = false;
+        match result {
+            Ok(list) => {
+                self.user_servers = list;
+                self.user_servers_error = None;
+            }
+            Err(e) => {
+                self.user_servers.clear();
+                self.user_servers_error = Some(format!("{e:#}"));
+            }
+        }
+        let len = self.current_server_list().len();
+        if self.selected_server >= len {
+            self.selected_server = len.saturating_sub(1);
+        }
+        self.reset_server_covers();
+        if !self.server_launching {
+            self.server_status = self.server_tab_status();
+        }
+    }
+
+    /// 打开添加服务器表单（写入当前实例的 servers.dat）。
+    pub fn open_server_add(&mut self) {
+        if self.user_servers_path().is_none() {
+            self.server_status = "没有可用的 Java 实例：先安装/选择一个 Java 版本".into();
+            return;
+        }
+        self.server_add = Some(ServerAddForm::default());
+    }
+
+    fn handle_server_add_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let Some(mut form) = self.server_add.take() else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => return,
+            KeyCode::Tab | KeyCode::Down | KeyCode::Up => {
+                form.focus = (form.focus + 1) % 2;
+                form.error.clear();
+            }
+            KeyCode::Enter => {
+                self.server_add = Some(form);
+                self.submit_server_add();
+                return;
+            }
+            KeyCode::Backspace => {
+                let field = if form.focus == 0 {
+                    &mut form.addr
+                } else {
+                    &mut form.name
+                };
+                field.pop();
+                form.error.clear();
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                let field = if form.focus == 0 {
+                    &mut form.addr
+                } else {
+                    &mut form.name
+                };
+                field.push(c);
+                form.error.clear();
+            }
+            _ => {}
+        }
+        self.server_add = Some(form);
+    }
+
+    fn submit_server_add(&mut self) {
+        let Some(form) = self.server_add.clone() else {
+            return;
+        };
+        if form.addr.trim().is_empty() {
+            if let Some(f) = &mut self.server_add {
+                f.error = "地址不能为空".into();
+            }
+            return;
+        }
+        let Some(path) = self.user_servers_path() else {
+            if let Some(f) = &mut self.server_add {
+                f.error = "没有可用的 Java 实例".into();
+            }
+            return;
+        };
+        match crate::servers_dat::add(&path, &form.name, &form.addr) {
+            Ok(entry) => {
+                self.server_add = None;
+                let srv = crate::api::mcserver::JavaServer {
+                    name: entry.name.clone(),
+                    host: entry.host.clone(),
+                    port: entry.port,
+                    favicon: entry.icon.clone(),
+                    ..Default::default()
+                };
+                let idx = match self
+                    .user_servers
+                    .iter()
+                    .position(|s| s.host.eq_ignore_ascii_case(&entry.host) && s.port == entry.port)
+                {
+                    Some(i) => {
+                        self.user_servers[i] = srv;
+                        i
+                    }
+                    None => {
+                        self.user_servers.push(srv);
+                        self.user_servers.len() - 1
+                    }
+                };
+                // 切到用户标签并选中刚加的条目
+                self.server_tab_sel[self.server_tab.index()] = self.selected_server;
+                self.server_tab = ServerTab::User;
+                self.selected_server = idx;
+                self.server_tab_sel[ServerTab::User.index()] = idx;
+                self.srv_scroll = 0;
+                self.reset_server_covers();
+                self.status = format!("已添加 {}（写入 servers.dat）", entry.addr());
+                self.server_status = format!(
+                    "已添加 {} · 与 Java 客户端同步 · 正在 ping…",
+                    entry.addr()
+                );
+                self.spawn_load_user_servers();
+            }
+            Err(e) => {
+                if let Some(f) = &mut self.server_add {
+                    f.error = format!("{e:#}");
+                }
+            }
+        }
+    }
+
+    /// 删除选中项（仅用户标签；直接从 servers.dat 删除）。
+    fn remove_selected_user_server(&mut self) {
+        if self.server_tab != ServerTab::User {
+            return;
+        }
+        let Some(entry) = self.user_servers.get(self.selected_server).cloned() else {
+            return;
+        };
+        let Some(path) = self.user_servers_path() else {
+            return;
+        };
+        match crate::servers_dat::remove(&path, &entry.addr()) {
+            Ok(true) => {
+                self.user_servers.retain(|s| {
+                    !(s.host.eq_ignore_ascii_case(&entry.host) && s.port == entry.port)
+                });
+                let len = self.user_servers.len();
+                if self.selected_server >= len {
+                    self.selected_server = len.saturating_sub(1);
+                }
+                self.server_tab_sel[ServerTab::User.index()] = self.selected_server;
+                self.reset_server_covers();
+                self.status = format!("已删除 {}（servers.dat）", entry.addr());
+                self.server_status = self.server_tab_status();
+            }
+            Ok(false) => {
+                self.server_status = format!("servers.dat 里没有 {}", entry.addr());
+            }
+            Err(e) => {
+                self.server_status = format!("删除失败: {e:#}");
+            }
+        }
+    }
+
     /// 服务器页：加载 Java 国际服列表并 ping 状态（无需登录）
     pub fn spawn_load_servers(&mut self) {
         if self.server_loading {
@@ -2792,6 +3204,7 @@ impl App {
         }
         self.server_loading = true;
         self.server_status = "正在连接 Java 服务器…".into();
+        self.spawn_load_user_servers();
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let list = crate::api::mcserver::load_all().await;
@@ -2806,7 +3219,7 @@ impl App {
         if self.server_launching {
             return;
         }
-        let Some(srv) = self.servers.get(self.selected_server).cloned() else {
+        let Some(srv) = self.current_server_entry() else {
             self.server_status = "无可进入的服务器（按 r 刷新）".into();
             return;
         };
@@ -2840,7 +3253,7 @@ impl App {
         tokio::spawn(async move {
             let result = launch_instance_inner(
                 &mc_dir,
-                &mc_dir,
+                &inst.dir,
                 &inst,
                 &username,
                 None,
@@ -3249,7 +3662,10 @@ impl App {
                     self.grid_covers[index] = protocol;
                 }
             }
-            TaskMsg::SrvCoverLoaded { index, img } => {
+            TaskMsg::SrvCoverLoaded { index, gen, img } => {
+                if gen != self.srv_cover_gen {
+                    return;
+                }
                 self.srv_cover_queue.retain(|&i| i != index);
                 if img.is_none() && index < self.srv_cover_none.len() {
                     // 没图或解码失败 → 卡片退回纯文字，不留空占位
@@ -3353,6 +3769,9 @@ impl App {
             }
             TaskMsg::GameExit(code) => self.on_game_exit(code),
             TaskMsg::ServerListLoaded(list) => self.on_server_list_loaded(list),
+            TaskMsg::UserServersLoaded { path, result } => {
+                self.on_user_servers_loaded(path, result)
+            }
             TaskMsg::ServerDone(result) => self.on_server_done(result),
             TaskMsg::PluginInstallDone(result) => match result {
                 Ok(info) => {
@@ -3779,19 +4198,13 @@ impl App {
 
     fn on_server_list_loaded(&mut self, list: Vec<crate::api::mcserver::JavaServer>) {
         self.server_loading = false;
-        self.srv_covers.clear();
-        self.srv_cover_queue.clear();
-        self.srv_cover_none.clear();
         self.servers = list;
         self.selected_server = 0;
         self.srv_scroll = 0;
-        self.srv_covers = (0..self.servers.len()).map(|_| None).collect();
-        self.srv_cover_none = vec![false; self.servers.len()];
-        let online = self.servers.iter().filter(|s| s.error.is_none()).count();
-        self.server_status = format!(
-            "共 {} 个 Java 国际服 · 在线 {online} · ↑↓←→ 选择 · 回车进服 · r 刷新",
-            self.servers.len()
-        );
+        self.reset_server_covers();
+        if !self.server_launching {
+            self.server_status = self.server_tab_status();
+        }
     }
 
     fn on_server_done(&mut self, result: Result<u32>) {
@@ -4443,10 +4856,47 @@ impl App {
             self.handle_theme_picker_key(key);
             return;
         }
+        // 添加服务器表单：开着时独占按键
+        if self.server_add.is_some() {
+            self.handle_server_add_key(key);
+            return;
+        }
         // LittleSkin 登录输入模式：短路其余按键处理，只走输入
         if self.ls.input && self.home_view != HomeView::Resource {
             self.handle_global_key(key);
             return;
+        }
+        // 服务器页：Ctrl+1/2/3 切标签；a 添加、x 删除（仅用户标签）
+        if self.home_view == HomeView::Server && !self.role_input && !self.shell_input {
+            use crossterm::event::{KeyCode, KeyModifiers};
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                let tab = match key.code {
+                    KeyCode::Char('1') => Some(ServerTab::User),
+                    KeyCode::Char('2') => Some(ServerTab::Recommended),
+                    KeyCode::Char('3') => Some(ServerTab::All),
+                    _ => None,
+                };
+                if let Some(tab) = tab {
+                    self.set_server_tab(tab);
+                    return;
+                }
+            } else if !key.modifiers.contains(KeyModifiers::ALT) {
+                if matches!(key.code, KeyCode::Char('a') | KeyCode::Char('A'))
+                    && (self.home_focus == HomeFocus::List
+                        || self.home_focus == HomeFocus::Banner
+                        || self.server_tab == ServerTab::User)
+                {
+                    self.open_server_add();
+                    return;
+                }
+                if matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
+                    && self.server_tab == ServerTab::User
+                    && self.home_focus == HomeFocus::List
+                {
+                    self.remove_selected_user_server();
+                    return;
+                }
+            }
         }
         if self.home_view == HomeView::Resource {
             self.handle_maps_key(key);
@@ -5924,6 +6374,88 @@ mod tests {
     /// 隔离配置目录的 App（不让测试碰真实的 ~/.config/mctl）
     fn app() -> App {
         App::new_from(crate::storage::tmp_config_dir("app")).unwrap()
+    }
+
+    fn js(name: &str, host: &str, builtin: bool) -> crate::api::mcserver::JavaServer {
+        crate::api::mcserver::JavaServer {
+            name: name.into(),
+            host: host.into(),
+            port: 25565,
+            builtin,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn server_tabs_split_lists_and_remember_selection() {
+        let mut app = app();
+        app.servers = vec![js("推荐", "rec.example.net", true), js("自定义", "custom.example.net", false)];
+        app.user_servers = vec![js("用户", "user.example.net", false)];
+        assert_eq!(app.server_list_for(ServerTab::All).len(), 3);
+        assert_eq!(app.server_list_for(ServerTab::Recommended).len(), 1);
+        assert_eq!(app.server_list_for(ServerTab::User).len(), 1);
+
+        app.selected_server = 1; // All 里选中「自定义」
+        app.set_server_tab(ServerTab::User);
+        assert_eq!(app.server_tab, ServerTab::User);
+        assert_eq!(app.selected_server, 0);
+        app.set_server_tab(ServerTab::All);
+        assert_eq!(app.selected_server, 1, "切回 All 要恢复原选中项");
+    }
+
+    #[tokio::test]
+    async fn ctrl_tabs_only_work_on_server_page() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let mut app = app();
+        app.home_view = HomeView::Instance;
+        app.handle_key(ctrl('1'));
+        assert_eq!(app.server_tab, ServerTab::All, "非服务器页 Ctrl+1 不生效");
+
+        app.home_view = HomeView::Server;
+        app.handle_key(ctrl('1'));
+        assert_eq!(app.server_tab, ServerTab::User);
+        app.handle_key(ctrl('2'));
+        assert_eq!(app.server_tab, ServerTab::Recommended);
+        app.handle_key(ctrl('3'));
+        assert_eq!(app.server_tab, ServerTab::All);
+    }
+
+    #[tokio::test]
+    async fn add_and_remove_server_syncs_servers_dat() {
+        let dir = crate::storage::tmp_config_dir("app-server-add");
+        let mut app = App::new_from(dir.clone()).unwrap();
+        let inst_dir = dir.join("inst");
+        std::fs::create_dir_all(&inst_dir).unwrap();
+        app.instances = vec![Instance {
+            bedrock: false,
+            id: "1.21.1".into(),
+            version_type: "release".into(),
+            main_class: "net.minecraft.client.main.Main".into(),
+            assets_index: "17".into(),
+            java_major: 21,
+            dir: inst_dir.clone(),
+        }];
+        app.selected_instance = 0;
+        app.open_server_add();
+        {
+            let form = app.server_add.as_mut().unwrap();
+            form.addr = "127.0.0.1:1".into();
+            form.name = "本地测试服".into();
+        }
+        app.submit_server_add();
+        assert_eq!(app.server_tab, ServerTab::User, "添加后切到用户标签");
+        assert!(app.server_add.is_none());
+        let path = inst_dir.join("servers.dat");
+        let list = crate::servers_dat::load(&path).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "本地测试服");
+        assert_eq!(app.user_servers.len(), 1);
+
+        app.selected_server = 0;
+        app.remove_selected_user_server();
+        assert!(crate::servers_dat::load(&path).unwrap().is_empty());
+        assert!(app.user_servers.is_empty());
     }
 
     /// Modrinth 网格：距尾部不足两行就预取下一页，不等选到最后一格

@@ -15,8 +15,12 @@
 - **TUI + CLI**：不带参数进入终端界面；带参数走 `mctl tree` 里的层级命令。
 - **本地实例 / 世界**：扫描已安装版本，管理存档，启动游戏；支持 Java 8 / 17 / 21
   自动选择。
-- **Java 国际服**：内置精选列表 + 自定义服务器，原版 Server List Ping 直连获取
-  版本、在线人数、延迟和 favicon；选中条目后用本地实例 `--server/--port` 进服。
+- **Java 国际服**：服务器页用浏览器式标签分成「Java 国际服 / 用户服务器 /
+  推荐服务器」。状态由原版 Server List Ping 直连获取（版本、在线人数、延迟、
+  favicon）；选中条目后用本地实例 `--server/--port` 进服。
+- **用户服务器双向同步**：在服务器页按 `Ctrl+1` 查看当前实例的
+  `servers.dat`，按 `a` 添加、`x` 删除。mctl 写的就是 Java 客户端用的那份
+  文件；Java 里加的服务器，回到 mctl 按 `r` 也能看到。`Ctrl+2` 只看内置推荐。
 - **资源下载**：网易资源中心、Modrinth、Mojang、本地文件，以及从 GitHub
   发现并安装插件（topic：`mctl-plugin`）。
 - **账号**：4399 登录（网易资源）与 LittleSkin / 离线名（本地与 Java 服务器）。
@@ -73,6 +77,8 @@ mctl tree                    # 完整命令树
 
 配置、缓存和下载默认在 `~/.config/mctl/`。设置页可改游戏目录和下载目录。
 服务器页用方向键选卡片，回车用当前本地实例进服；`r` 重新 ping。
+服务器页内 `Ctrl+1` 切到用户服务器、`Ctrl+2` 切到推荐服务器、`Ctrl+3`
+回到全部；标签也可以直接用鼠标点。
 
 ### 资源与插件
 
@@ -112,10 +118,15 @@ and a scriptable hierarchical CLI.
   hierarchical commands shown by `mctl tree`.
 - **Local instances / worlds**: scan installed versions, manage saves, and
   launch the game with automatic Java 8 / 17 / 21 selection.
-- **Java servers**: a curated built-in list plus custom entries. Status,
-  player counts, latency, and favicons come from the vanilla Server List Ping
-  protocol; pressing Enter joins through a local instance with
-  `--server/--port`.
+- **Java servers**: the server page uses browser-style tabs: all servers,
+  user servers, and recommended servers. Status, player counts, latency, and
+  favicons come from the vanilla Server List Ping protocol; pressing Enter
+  joins through a local instance with `--server/--port`.
+- **Two-way user-server sync**: `Ctrl+1` shows the current instance's
+  `servers.dat`. Press `a` to add and `x` to remove; mctl writes the same file
+  the Java client uses, so servers added in Java appear after pressing `r`,
+  and servers added in mctl appear in Java. `Ctrl+2` shows built-in
+  recommendations only.
 - **Resources**: NetEase resource center, Modrinth, Mojang, local files, and
   GitHub plugin discovery (topic: `mctl-plugin`).
 - **Accounts**: 4399 login for NetEase resources; LittleSkin or offline names
@@ -178,7 +189,9 @@ mctl tree                    # full command tree
 Configuration, caches, and downloads live under `~/.config/mctl/` by default.
 The settings page can change the game and download directories. In the server
 view, use the arrow keys to select a card and Enter to join with the current
-local instance; press `r` to re-ping.
+local instance; press `r` to re-ping. `Ctrl+1` switches to user servers,
+`Ctrl+2` to recommended servers, and `Ctrl+3` back to all; tabs are also
+clickable.
 
 ### Resources and plugins
 

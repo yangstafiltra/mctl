@@ -275,18 +275,7 @@ pub async fn load_all() -> Vec<JavaServer> {
                 builtin,
                 ..Default::default()
             };
-            match ping(&host, port).await {
-                Ok(p) => {
-                    srv.version = p.version;
-                    srv.protocol = p.protocol;
-                    srv.online = p.online;
-                    srv.max = p.max;
-                    srv.motd = p.motd;
-                    srv.favicon = p.favicon;
-                    srv.latency_ms = Some(p.latency_ms);
-                }
-                Err(e) => srv.error = Some(format!("{e:#}")),
-            }
+            fill_status(&mut srv).await;
             (idx, srv)
         });
     }
@@ -299,6 +288,53 @@ pub async fn load_all() -> Vec<JavaServer> {
     }
     got.sort_by_key(|(idx, _)| *idx);
     got.into_iter().map(|(_, s)| s).collect()
+}
+
+/// 读取当前实例的 `servers.dat` 并并发 ping。
+pub async fn load_user(path: &std::path::Path) -> Result<Vec<JavaServer>> {
+    let entries = crate::servers_dat::load(path)?;
+    let mut set = tokio::task::JoinSet::new();
+    for (idx, entry) in entries.into_iter().enumerate() {
+        set.spawn(async move {
+            let mut srv = JavaServer {
+                name: entry.name,
+                host: entry.host,
+                port: entry.port,
+                favicon: entry.icon,
+                ..Default::default()
+            };
+            fill_status(&mut srv).await;
+            (idx, srv)
+        });
+    }
+    let mut got = Vec::new();
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(item) => got.push(item),
+            Err(e) => eprintln!("user server ping task panicked: {e}"),
+        }
+    }
+    got.sort_by_key(|(idx, _)| *idx);
+    Ok(got.into_iter().map(|(_, s)| s).collect())
+}
+
+/// ping 一次并把结果填进条目。失败时只写 `error`，地址和名称保留。
+async fn fill_status(srv: &mut JavaServer) {
+    match ping(&srv.host, srv.port).await {
+        Ok(p) => {
+            srv.version = p.version;
+            srv.protocol = p.protocol;
+            srv.online = p.online;
+            srv.max = p.max;
+            srv.motd = p.motd;
+            // servers.dat 自带图标优先（Java 客户端已经缓存过），没有就用 ping 回来的
+            if srv.favicon.is_none() {
+                srv.favicon = p.favicon;
+            }
+            srv.latency_ms = Some(p.latency_ms);
+        }
+        Err(e) => srv.error = Some(format!("{e:#}")),
+    }
 }
 
 /// 原版 Server List Ping（握手 + status）。5 秒超时。
@@ -519,6 +555,21 @@ mod tests {
             let mut cur = std::io::Cursor::new(buf);
             assert_eq!(read_varint_sync(&mut cur).unwrap(), n);
         }
+    }
+
+    #[tokio::test]
+    async fn load_user_reads_servers_dat_and_keeps_offline_entries() {
+        let dir = std::env::temp_dir().join(format!("mctl_user_servers_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("servers.dat");
+        crate::servers_dat::add(&path, "Java 加的", "127.0.0.1:1").unwrap();
+        let list = load_user(&path).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "Java 加的");
+        assert_eq!(list[0].port, 1);
+        assert!(list[0].error.is_some(), "连不上也要保留条目");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

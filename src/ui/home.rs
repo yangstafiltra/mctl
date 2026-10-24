@@ -1,11 +1,11 @@
-use crate::app::{App, HomeFocus, HomeView, InstallStatus};
+use crate::app::{App, HomeFocus, HomeView, InstallStatus, ServerTab};
 use crate::models::Account;
 use crate::theme;
 use crate::ui::cell_width_of;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -365,7 +365,7 @@ pub(crate) fn status_panel(frame: &mut Frame, app: &App, area: Rect, focused: bo
 /// 服务器视图的左下角状态栏：随选中服务器变化 + 客户端登录名称（角色名）可编辑
 fn server_mode_status(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     // 行1：选中服务器信息（随 ↑↓ 变化）
-    let server_line: Line = match app.servers.get(app.selected_server) {
+    let server_line: Line = match app.current_server_entry() {
         Some(s) => Line::from(vec![
             Span::styled("服务器 ", theme::dim()),
             Span::styled(s.name.clone(), theme::base().bold()),
@@ -761,18 +761,31 @@ pub(crate) fn border_flow(frame: &mut Frame, area: Rect, p: f32) {
 }
 
 fn servers_panel(frame: &mut Frame, app: &mut App, area: Rect, focused: bool) {
+    if area.height == 0 {
+        return;
+    }
+    // 浏览器式标签栏：Java 国际服 / 用户服务器 (Ctrl+1) / 推荐服务器 (Ctrl+2)
+    let [tabs_area, cards_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(area);
+    server_tab_bar(frame, app, tabs_area);
+
+    let list = app.current_server_list();
     let title = if app.server_status.is_empty() {
-        "▤ Java 国际服 · ↑↓←→ 选择 · 回车进服".to_string()
+        format!("▤ {} · ↑↓←→ 选择 · 回车进服", app.server_tab.label())
     } else {
-        format!("▤ Java 国际服 · {}", app.server_status)
+        format!("▤ {} · {}", app.server_tab.label(), app.server_status)
     };
-    let empty = if app.server_loading {
+    let empty = if app.server_loading || app.user_servers_loading {
         "正在 ping Java 服务器…"
+    } else if app.server_tab == ServerTab::User {
+        "（还没有用户服务器，按 a 添加；Java 里加的也会出现在这里）"
     } else {
         "（没有服务器，按 r 刷新）"
     };
-    let cards: Vec<(String, String)> = app
-        .servers
+    let cards: Vec<(String, String)> = list
         .iter()
         .map(|s| {
             let version = if s.version.is_empty() {
@@ -792,13 +805,49 @@ fn servers_panel(frame: &mut Frame, app: &mut App, area: Rect, focused: bool) {
     server_cards(
         frame,
         app,
-        area,
+        cards_area,
         focused,
         &title,
         empty,
         &cards,
         selected,
     );
+}
+
+/// 服务器页顶部标签栏。每帧回填可点击区域，鼠标点标签和 Ctrl+1/2/3 等价。
+fn server_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut rects = Vec::new();
+    let mut x = area.x;
+    let right = area.x.saturating_add(area.width);
+    for (i, tab) in ServerTab::ALL.iter().enumerate() {
+        if x >= right {
+            break;
+        }
+        let label = format!(" {} {} ", tab.label(), tab.hint());
+        let w = cell_width_of(&label).min(u16::MAX as usize) as u16;
+        let visible_w = w.min(right - x);
+        let rect = Rect {
+            x,
+            y: area.y,
+            width: visible_w,
+            height: 1,
+        };
+        let style = if *tab == app.server_tab {
+            theme::selected_block()
+        } else {
+            theme::dim()
+        };
+        spans.push(Span::styled(label, style));
+        rects.push((rect, *tab));
+        x = x.saturating_add(w);
+        if i + 1 < ServerTab::ALL.len() && x < right {
+            spans.push(Span::styled("│", theme::dim()));
+            x = x.saturating_add(1);
+        }
+    }
+    app.server_tab_rects = rects;
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn downloads_panel(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
@@ -1301,4 +1350,72 @@ pub fn draw_login_full(frame: &mut Frame, app: &mut App, area: Rect) {
             );
         }
     }
+}
+
+/// 添加 Java 服务器浮层：地址/名称两栏，保存到当前实例的 servers.dat。
+pub fn server_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(form) = &app.server_add else {
+        return;
+    };
+    if area.width < 24 || area.height < 6 {
+        return;
+    }
+    let w = area.width.saturating_sub(8).min(72).max(24);
+    let h = area.height.saturating_sub(4).min(9).max(6);
+    let popup = Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    };
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::accent())
+        .title(Span::styled(" 添加 Java 服务器 ", theme::accent().bold()));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let label_w = 6usize; // “地址  ” / “名称  ”
+    let val_w = (inner.width as usize).saturating_sub(label_w + 1);
+    let field = |label: &str, value: &str, focused: bool| {
+        let mut spans = vec![
+            Span::styled(format!("{label:<4}"), theme::dim()),
+            Span::raw("  "),
+            Span::styled(
+                truncate(value, val_w),
+                if focused {
+                    theme::accent().bold()
+                } else {
+                    theme::base()
+                },
+            ),
+        ];
+        if focused {
+            spans.push(Span::styled("▊", theme::accent()));
+        }
+        Line::from(spans)
+    };
+    let mut lines = vec![
+        field("地址", &form.addr, form.focus == 0),
+        field("名称", &form.name, form.focus == 1),
+        Line::from(Span::styled(
+            "写入当前实例的 servers.dat，Java 客户端下次打开即可看到",
+            theme::dim(),
+        )),
+        Line::from(Span::styled(
+            "Enter 保存 · Tab 切换字段 · Esc 取消",
+            theme::dim(),
+        )),
+    ];
+    if !form.error.is_empty() {
+        lines.push(Line::from(Span::styled(
+            truncate(&form.error, inner.width as usize),
+            theme::error(),
+        )));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
 }
